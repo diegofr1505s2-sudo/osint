@@ -20,3 +20,11 @@ def test_configured_models_are_used_without_network_calls():
     assert configured_model("cyber", config) == "local-cyber:latest"
     assert configured_model("summary", {}) == AI_PROFILES["text"].default_model
     assert set(("summary", "vision", "ocr", "cyber", "code")) <= set(AI_TASKS)
+
+
+def test_settings_mark_installed_and_missing_models():
+    from catexe.app import model_install_mark
+
+    assert model_install_mark("qwen2.5:3b", ["qwen2.5:3b"]) == "☑ installé"
+    assert model_install_mark("qwen2.5:3b", ["qwen2.5:7b"]) == "☐ non installé"
+    assert model_install_mark("qwen2.5:3b", None) == "○ Ollama non détecté"

@@ -18,6 +18,7 @@ from rich.live import Live
 from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
+from .search import APPROX, EXACT, search_match
 
 
 @dataclass
@@ -53,7 +54,7 @@ def read_key() -> str:
 
         char = msvcrt.getwch()
         if char in ("\x00", "\xe0"):
-            return {"H": "up", "P": "down", "K": "left", "M": "right", "G": "home", "O": "end", "I": "pgup", "Q": "pgdn", "S": "del"}.get(msvcrt.getwch(), "")
+            return {"H": "up", "P": "down", "K": "left", "M": "right", "G": "home", "O": "end", "I": "pgup", "Q": "pgdn", "S": "del", "<": "f2"}.get(msvcrt.getwch(), "")
         return {"\r": "enter", "\n": "enter", "\x1b": "esc", "\x08": "backspace", "\t": "tab", "\x03": "ctrlc"}.get(char, char)
 
     import select as select_module
@@ -75,7 +76,7 @@ def read_key() -> str:
                 b"[A": "up", b"[B": "down", b"[C": "right", b"[D": "left",
                 b"OA": "up", b"OB": "down", b"OC": "right", b"OD": "left",
                 b"[H": "home", b"[F": "end", b"OH": "home", b"OF": "end",
-                b"[1~": "home", b"[4~": "end", b"[5~": "pgup", b"[6~": "pgdn", b"[3~": "del",
+                b"[1~": "home", b"[4~": "end", b"[5~": "pgup", b"[6~": "pgdn", b"[3~": "del", b"[12~": "f2", b"OQ": "f2",
             }.get(sequence, "esc" if not sequence else "")
         if first and first[0] >= 0xC0:
             first += os.read(fd, 1 if first[0] < 0xE0 else 2 if first[0] < 0xF0 else 3)
@@ -107,6 +108,7 @@ def select(ctx: UIContext, title: str, items: list[Any], default=None, back=True
         return _select_plain(ctx, title, items, pick, current, back, value_at)
 
     filt = ""
+    filter_mode = EXACT
     groups = []
     if paged:
         for index, item in enumerate(items):
@@ -124,8 +126,12 @@ def select(ctx: UIContext, title: str, items: list[Any], default=None, back=True
     def visible():
         if not filt:
             return list(groups[page][1]) if paged else list(range(len(items)))
+        hits = [i for i in pick if search_match(
+            filt,
+            " ".join(ctx.tr(str(items[i].get(key, ""))) for key in ("label", "desc", "tags", "section")),
+            filter_mode,
+        )]
         normalized = _plain(ctx, filt)
-        hits = [i for i in pick if normalized in _plain(ctx, " ".join(str(items[i].get(key, "")) for key in ("label", "desc", "tags", "section")))]
         return sorted(hits, key=lambda i: (normalized not in _plain(ctx, items[i]["label"]), not _plain(ctx, items[i]["label"]).lstrip(" ←").split(" ", 1)[-1].startswith(normalized)))
 
     def render():
@@ -163,7 +169,10 @@ def select(ctx: UIContext, title: str, items: list[Any], default=None, back=True
             tabs.append(f"  {page + 1}/{len(groups)}", style=ctx.M)
             parts.append(tabs)
         if filt:
-            parts.append(Text.assemble(("  🔎 ", ctx.Y), (filt, "bold #ffc861"), ("▏", "blink #ffc861"), (f"   {len(selectable)} " + ctx.tr("résultat(s)") if selectable else "   " + ctx.tr("aucun résultat"), ctx.M)))
+            mode_label = "Exact" if filter_mode == EXACT else "Approx"
+            parts.append(Text.assemble(("  🔎 ", ctx.Y), (filt, "bold #ffc861"), ("▏", "blink #ffc861"),
+                                      (f"  [{mode_label}]", ctx.G if filter_mode == EXACT else ctx.P),
+                                      (f"   {len(selectable)} " + ctx.tr("résultat(s)") if selectable else "   " + ctx.tr("aucun résultat"), ctx.M)))
         if use_side:
             panel = Table.grid(padding=(0, 2))
             panel.add_column(no_wrap=True)
@@ -172,7 +181,7 @@ def select(ctx: UIContext, title: str, items: list[Any], default=None, back=True
             parts.append(panel)
         else:
             parts.append(listing)
-        foot = (ctx.tr("n / → page suivante · p / ← précédente · ") if paged and not filt else "") + ctx.tr(hint or "↑↓ naviguer · Entrée valider · tape pour filtrer") + ("" if not back else " · " + ctx.tr("Échap retour"))
+        foot = (ctx.tr("n / → page suivante · p / ← précédente · ") if paged and not filt else "") + ctx.tr(hint or "↑↓ naviguer · Entrée valider · tape pour filtrer") + " · F2 exact/approx" + ("" if not back else " · " + ctx.tr("Échap retour"))
         parts.append(Text(" " + foot, style=ctx.M))
         return Group(*parts)
 
@@ -182,6 +191,8 @@ def select(ctx: UIContext, title: str, items: list[Any], default=None, back=True
             key = read_key()
             if key == "ctrlc":
                 raise KeyboardInterrupt
+            if key == "f2":
+                filter_mode = APPROX if filter_mode == EXACT else EXACT
             visible_items = [i for i in visible() if not items[i].get("header")]
             if paged and not filt and (key in ("n", "N", "right", "tab", "p", "P", "left") or (key.isdigit() and 0 < int(key) <= len(groups))):
                 page = int(key) - 1 if key.isdigit() else (page + (1 if key in ("n", "N", "right", "tab") else -1)) % len(groups)

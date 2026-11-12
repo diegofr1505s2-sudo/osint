@@ -2,7 +2,7 @@
 
 ## Stockage
 
-Les tokens Discord et clés API ne sont plus conservés dans `config.json`.
+Les jetons et clés API ne sont plus conservés dans `config.json`.
 `SecretStore` les place dans `secrets.json`, avec permissions `0600` lorsque le
 système le permet. Les variables `CATEXE_SECRET_*` ont priorité pour les
 installations automatisées.

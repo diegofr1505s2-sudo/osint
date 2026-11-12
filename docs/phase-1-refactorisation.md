@@ -17,7 +17,7 @@ Le registre du menu est maintenant dans `catexe/modules/menu_registry.py` :
 
 - `build_sections()` construit les sections et leurs 61 entrées ;
 - `KEYW` contient les mots-clés de recherche ;
-- le nombre de langages et l’URL Discord sont injectés par l’application.
+- le nombre de langages est injecté par l’application.
 
 Les primitives terminal sont dans `catexe/modules/ui.py` :
 

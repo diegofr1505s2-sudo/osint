@@ -22,7 +22,7 @@ def test_pyinstaller_spec_and_example_exclude_personal_runtime_data():
     assert '"lang"' in spec and '"data"' in spec
     assert "secrets.json" not in spec
     example = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
-    assert "discord_token" not in example
+    assert not any(key.endswith(("_token", "_key")) for key in example)
     assert "keys" not in example
 
 

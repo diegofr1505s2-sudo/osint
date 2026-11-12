@@ -10,7 +10,7 @@ sur un nom partiel peut encore produire plusieurs comptes légitimes : vérifiez
 la photo, la bio, les liens et l’identifiant interne avant de relier deux
 comptes.
 
-Un nom affiché Discord comme `Cat.exe` peut être différent de l’identifiant
+Un nom affiché comme `Cat.exe` peut être différent de l’identifiant
 réel `cat.3xe`. Pour retrouver ce compte, recherchez l’identifiant exact quand
 il est visible ; le catalogue de sites ne peut pas déduire de façon fiable une
 transformation leetspeak entre les deux.

@@ -111,12 +111,12 @@ Les contrôles confirment que :
 - `config.json` est ignoré par Git ;
 - `secrets.json` est ignoré par Git ;
 - aucun de ces fichiers n’existe dans l’arbre audité ;
-- `config.example.json` ne contient ni token Discord ni dictionnaire de clés ;
+- `config.example.json` ne contient ni secret ni dictionnaire de clés ;
 - la spec PyInstaller ne référence pas `secrets.json`.
 
 ## Limites de l’audit
 
-L’audit n’a pas testé les services externes en conditions réelles : APIs publiques, DNS, services sociaux, urlscan, registres, Tor ou Discord. Ces dépendances peuvent être indisponibles, limitées ou modifier leur interface indépendamment du code local.
+L’audit n’a pas testé les services externes en conditions réelles : APIs publiques, DNS, services sociaux, urlscan, registres et Tor. Ces dépendances peuvent être indisponibles, limitées ou modifier leur interface indépendamment du code local.
 
 L’audit n’a pas lancé Ollama ni téléchargé de modèle IA. Les tests vérifient le routage, la configuration et les messages d’indisponibilité, pas la qualité sémantique des réponses produites par chaque modèle.
 

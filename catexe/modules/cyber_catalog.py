@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .search import EXACT, search_match
+
 
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 
@@ -16,12 +18,11 @@ def load_catalog(path: Path) -> dict[str, Any]:
     return data
 
 
-def search_tools(tools: list[dict[str, Any]], query: str = "", category: str | None = None, risk: str | None = None, platform: str | None = None) -> list[dict[str, Any]]:
-    needle = query.casefold().strip()
+def search_tools(tools: list[dict[str, Any]], query: str = "", category: str | None = None, risk: str | None = None, platform: str | None = None, mode: str = EXACT) -> list[dict[str, Any]]:
     result = []
     for tool in tools:
-        haystack = " ".join(str(tool.get(key, "")) for key in ("name", "description", "category", "language", "source_ref")).casefold()
-        if needle and needle not in haystack:
+        haystack = " ".join(str(tool.get(key, "")) for key in ("name", "description", "category", "language", "source_ref"))
+        if query.strip() and not search_match(query.strip(), haystack, mode):
             continue
         if category and tool.get("category") != category:
             continue

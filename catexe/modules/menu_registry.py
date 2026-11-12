@@ -1,18 +1,17 @@
 """Registre déclaratif des modules et des mots-clés de recherche."""
 
 
-def build_sections(learn_count: int = 23, discord: str = "https://discord.gg/RWYAPZ8Qbp"):
+def build_sections(learn_count: int = 23):
     """Construit les sections du menu sans dépendre de l'application."""
     return [
     ("RECON IDENTITÉ", [
         ("mod_social", "👥 Lookup réseaux sociaux", "17 plateformes · fiches", "Fiche détaillée d'un pseudo sur GitHub (emails des commits, clés SSH), Reddit (heures d'activité → fuseau), TikTok, Instagram, YouTube, Bluesky, Mastodon, Telegram, Steam, Roblox, Chess.com, Lichess, GitLab, Hacker News, Keybase, Linktree, Docker Hub.\n\nInspiré de Sherlock / Maigret / Osintgram. Une fiche par page (n / p)."),
         ("mod_wmn", "🌐 Pseudo sur 600+ sites", "WhatsMyName", "Teste un pseudo sur plus de 600 sites avec la base WhatsMyName (celle utilisée par les pros de l'OSINT), mise à jour automatiquement.\n\nRésultats par pages + page HTML cliquable."),
         ("mod_person", "🧍 Recherche de personne", "emails · pseudos · annuaires", "Prénom + nom → adresses email probables (testées via Gravatar), pseudos probables, et toutes les recherches prêtes : LinkedIn, Facebook, Pages Blanches, Copains d'avant, dirigeants d'entreprise, PDF…"),
-        ("mod_discord", "💬 Discord lookup", "invitation · ID · widget", "Analyse une invitation Discord (serveur, ID, membres, créateur de l'invitation), la date de n'importe quel ID, un compte (avec token) ou les membres en ligne d'un serveur."),
         ("mod_user", "👤 Pseudos", "95 sites", "Teste un pseudo sur 95 sites (réseaux, jeux, dev, créa…) en parallèle, avec ses variantes (_ . -).\n\nTu donnes : un pseudo.\nTu obtiens : la liste des comptes trouvés, un niveau d'exposition et une checklist IA."),
-        ("mod_prevname", "⏳ Prevname", "anciens pseudos", "Retrouve les anciens pseudos d'un compte : Steam, Roblox, Minecraft, X, GitHub, Bluesky (historique complet), Discord (ID), 36 sites qui redirigent les anciens noms et 57 plateformes dans les archives web."),
+        ("mod_prevname", "⏳ Prevname", "anciens pseudos", "Retrouve les anciens pseudos d'un compte : Steam, Roblox, Minecraft, X, GitHub, Bluesky (historique complet), 36 sites qui redirigent les anciens noms et 57 plateformes dans les archives web."),
         ("mod_email", "📧 Email", "fuites · Gravatar", "Vérifie une adresse : fuites de données connues, avatar Gravatar, fournisseur, adresse jetable ou non, sécurité du domaine (SPF/DMARC)."),
-        ("mod_holehe", "📬 Email → comptes", "Holehe · 120 sites", "Teste sur ~120 sites (Instagram, Spotify, Amazon, Discord…) si un compte existe avec un email, comme l'outil Holehe, sans prévenir la personne. + lien Epieos."),
+        ("mod_holehe", "📬 Email → comptes", "Holehe · 120 sites", "Teste sur ~120 sites (Instagram, Spotify, Amazon…) si un compte existe avec un email, comme l'outil Holehe, sans prévenir la personne. + lien Epieos."),
         ("mod_breaches", "💧 Fuites d'un site", "Have I Been Pwned", "Un site ou un service a-t-il déjà été piraté ? Date de la fuite, nombre de comptes, données exposées (emails, mots de passe, adresses…), d'après la base publique Have I Been Pwned."),
         ("mod_pwned", "🔑 Fuite de mot de passe", "sans l'envoyer", "Vérifie si un mot de passe est dans les 900 millions de mots de passe fuités, sans jamais l'envoyer (seuls 5 caractères de son empreinte partent).\n\nDonne aussi sa force et le temps pour le casser."),
         ("mod_phone", "📱 Téléphone", "pays · opérateur", "Analyse un numéro : pays, type (mobile/fixe), opérateur d'origine, fuseau horaire, liens de recherche."),
@@ -20,7 +19,7 @@ def build_sections(learn_count: int = 23, discord: str = "https://discord.gg/RWY
         ("mod_iban", "🏦 IBAN", "clé · pays · banque", "Vérifie un IBAN avant un virement : clé de contrôle, pays, banque, guichet. Contre les faux RIB."),
         ("mod_vin", "🚗 Véhicule (VIN)", "constructeur · année · modèle", "Décode le numéro de série d'un véhicule : constructeur, pays, année, modèle, énergie. Pour vérifier une annonce d'occasion."),
         ("mod_crypto", "₿  Crypto", "solde · transactions", "Adresse Bitcoin / Ethereum : solde, nombre de transactions, première et dernière activité."),
-        ("mod_ids", "🆔 Décodeur d'ID & dates", "date cachée d'un lien", "Retrouve la date exacte cachée dans un lien ou un identifiant : vidéo TikTok, post X/Instagram/Threads/LinkedIn/Bluesky/Mastodon, ID Discord, timestamps Unix/Windows/Apple, UUID…\n\nMarche même si la date est masquée ou le post supprimé."),
+        ("mod_ids", "🆔 Décodeur d'ID & dates", "date cachée d'un lien", "Retrouve la date exacte cachée dans un lien ou un identifiant : vidéo TikTok, post X/Instagram/Threads/LinkedIn/Bluesky/Mastodon, timestamps Unix/Windows/Apple, UUID…\n\nMarche même si la date est masquée ou le post supprimé."),
     ]),
     ("IMAGE & GEOINT", [
         ("mod_maplink", "📎 Lien de carte → coordonnées", "Google Maps · Waze · OSM…", "Colle un lien Google Maps (même court), Apple Plans, Waze, OpenStreetMap, Bing, Yandex ou Here : l'outil sort les coordonnées, l'adresse, tous les formats et ouvre le lieu dans 8 autres cartes (Earth, Mapillary, Géoportail, Peakvisor…)."),
@@ -79,15 +78,14 @@ def build_sections(learn_count: int = 23, discord: str = "https://discord.gg/RWY
         ("mod_graph", "🧬 Graphe d'enquête", "façon Obsidian · fenêtre", "Une fenêtre à part qui dessine ton enquête en toile : pseudos, comptes, emails, IP, lieux… reliés entre eux.\n\nChaque module que tu lances l'alimente tout seul, en direct. Tu peux ajouter des éléments, les relier, mettre des notes, chercher, filtrer par type et exporter en image.\n\nInspiré d'Obsidian et Maltego."),
         ("mod_autoscan", "⚡ Scan auto", "façon SpiderFoot", "Donne une cible (pseudo, email, domaine, IP, nom…) : l'outil lance toutes les recherches possibles, puis recommence sur ce qu'il trouve, et remplit le graphe tout seul."),
         ("mod_report", "📄 Rapport", "PDF · HTML", "Tout ce que tu as trouvé pendant la session, avec synthèse IA, en PDF (lisible sur iPhone) ou en page web."),
-        ("mod_settings", "🔧 Réglages", "langue · IA locale · animations", "Langue, modèles d'IA locale (Ollama), animations, token Discord, dossier des résultats."),
-        ("discord", "💬 Discord", discord[8:], "Rejoins la communauté Cat.exe : challenges, classement, nouvelles vidéos."),
+        ("mod_settings", "🔧 Réglages", "langue · IA locale · animations", "Langue, modèles d'IA locale (Ollama), animations et dossier des résultats."),
         ("quit", "🚪 Quitter", "", "Fermer Cat.exe."),
     ]),
 ]
 
 
 KEYW = {"mod_bodacc": "bodacc entreprise liquidation dirigeant societe annonce legale", "mod_iban": "iban rib banque virement", "mod_vin": "vin voiture vehicule plaque carte grise", "mod_mac": "mac fabricant appareil wifi box", "mod_wayurls": "wayback archive fichiers pdf urls cdx", "mod_revimg": "google lens tineye yandex reverse image inversee", "mod_webcams": "webcam camera windy live", "mod_holehe": "holehe email comptes inscrit", "mod_harvest": "theharvester sous-domaines emails hunter", "mod_urlscan": "urlscan capture phishing scan", "mod_autoscan": "spiderfoot auto scan automatique", "mod_prosrc": "censys hunter intelx dehashed epieos osint framework", "mod_anon": "tor anonyme ip vpn proxy navigateur changer ip", "mod_maplink": "google maps waze lien coordonnees gps", "mod_photobatch": "dossier exif trajet chronologie timeline", "mod_imgcompare": "hash similaire doublon retouche original", "mod_vidinfo": "youtube tiktok invid dataviewer date miniature", "mod_breaches": "hibp piratage fuite site", "mod_graph": "obsidian maltego toile liens enquete reseau", "mod_social": "sherlock maigret instagram tiktok reddit github profil", "mod_wmn": "whatsmyname sherlock pseudo username", "mod_iplookup": "ip geoip vpn tor shodan",
-        "mod_img2gps": "gps coordonnees image photo exif geoclip", "mod_person": "nom prenom email linkedin", "mod_discord": "invite serveur snowflake",
-        "mod_toolbox": "stegano strings cidr timestamp offline", "mod_pwned": "password mdp pwned hibp", "mod_ids": "snowflake timestamp tiktok date", "mod_video": "film mp4 frames", "mod_geo": "geoint gps localisation",
+        "mod_img2gps": "gps coordonnees image photo exif geoclip", "mod_person": "nom prenom email linkedin",
+        "mod_toolbox": "stegano strings cidr timestamp offline", "mod_pwned": "password mdp pwned hibp", "mod_ids": "timestamp tiktok date", "mod_video": "film mp4 frames", "mod_geo": "geoint gps localisation",
         "mod_headers": "mail phishing spf dkim", "mod_decode": "base64 cyberchef ctf", "mod_hash": "md5 sha256 virus malware", "mod_net": "ip asn mac whois",
         "mod_learn": "dev code programmer python cours apprendre javascript", "mod_archive": "wayback", "mod_satellite": "esri imagery historique", "mod_diagnostics": "diagnostic système dépendances python rich pillow heic ollama ffmpeg playwright"}

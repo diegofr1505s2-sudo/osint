@@ -28,6 +28,7 @@ from .http_client import create_session
 from .modules.geolocation import GeoHypothesis, confidence_text, limitation_text, rank_hypotheses
 from .modules.financial_identifiers import decode_vin, validate_iban
 from .modules.ai_router import AI_PROFILES, configured_model, profile_for
+from .modules.search import APPROX, EXACT
 from .modules.cyber_catalog import categories as cyber_categories, load_catalog, platforms as cyber_platforms, risk_label, search_tools
 from .modules.ip_attribution import summarize_ip_sources
 from .modules.username_utils import normalize_username
@@ -76,8 +77,6 @@ except ImportError:
     phonenumbers = None
 
 VERSION = "6.3"
-DISCORD = "https://discord.gg/RWYAPZ8Qbp"
-DINFO = {}
 
 if os.name == "nt":
     os.system("")
@@ -99,7 +98,7 @@ CFG = load_config(CFG_FILE)
 SECRETS_FILE = BASE / "secrets.json"
 SECRETS = SecretStore(SECRETS_FILE)
 _legacy_secret_keys = dict(CFG.get("keys") or {})
-_migrated_secrets = SECRETS.migrate(CFG, ("discord_token",))
+_migrated_secrets = False
 for _key_name, _key_value in _legacy_secret_keys.items():
     if _key_value and not SECRETS.get("api_" + _key_name):
         SECRETS.set("api_" + _key_name, str(_key_value))
@@ -114,6 +113,7 @@ if _migrated_secrets:
     except OSError:
         pass
 REPORT = []
+AI_CALLS = 0
 
 
 def secret_get(name, default=""):
@@ -494,6 +494,8 @@ def ask_ai(prompt, img_b64=None, on_token=None, task="text"):
 
 
 def ai_print(prompt, title="Analyse IA", img=None, task="text"):
+    global AI_CALLS
+    AI_CALLS += 1
     from rich.markdown import Markdown
 
     def box_(text):
@@ -649,7 +651,7 @@ def geoclip_predict(img, k=5):
 
 def vantage_html(img, layers, prefill, gps, cam, center):
     data = {"layers": layers, "prefill": prefill, "gps": list(gps) if gps else None, "exifDir": cam.get("dir"), "fov": cam.get("hfov"),
-            "f35": cam.get("f35"), "center": list(center) if center else None, "discord": DISCORD}
+            "f35": cam.get("f35"), "center": list(center) if center else None}
     return VANTAGE_TPL.replace("__LEAFLET__", LEAFLET_HEAD).replace("__IMG__", img_b64(img, 1600)).replace("__DATA__", json.dumps(data))
 
 
@@ -683,7 +685,7 @@ button.gh{background:transparent;color:var(--t);border:1px solid var(--l)}
 .st{font:13px monospace;color:var(--y);margin-top:8px}
 .leg{font:12px monospace;color:var(--m);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap}
 </style></head><body>
-<header><b>CAT.exe // POSITION DU PHOTOGRAPHE</b><span>où se tenait la personne qui a pris la photo</span><a id="dc" target="_blank"></a></header>
+<header><b>CAT.exe // POSITION DU PHOTOGRAPHE</b><span>où se tenait la personne qui a pris la photo</span></header>
 <div class="wrap">
  <div class="card">
   <div id="ph"><img id="img" src="data:image/jpeg;base64,__IMG__" alt=""></div>
@@ -713,7 +715,6 @@ const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"]/g,c=>
 const R2D=180/Math.PI, D2R=Math.PI/180;
 const wrap=a=>{a=(a+Math.PI)%(2*Math.PI);if(a<0)a+=2*Math.PI;return a-Math.PI;};
 const CARD=d=>['nord','nord-est','est','sud-est','sud','sud-ouest','ouest','nord-ouest'][Math.floor(((d%360+360)%360+22.5)/45)%8];
-$('#dc').href=D.discord;$('#dc').textContent='discord Cat.exe';
 const img=$('#img'), ph=$('#ph');
 let pts=(D.prefill||[]).slice(), pend=null;
 const map=catMap('map',{center:D.center||[46.6,2.4],zoom:D.center?13:5,clickCoords:false});
@@ -1542,10 +1543,6 @@ def hist_track(key, name):
     return [(r["nom"], "vu le " + r["vu"]) for r in rec if r["nom"] != name]
 
 
-def snowflake_date(i):
-    return datetime.datetime.utcfromtimestamp(((int(i) >> 22) + 1420070400000) / 1000)
-
-
 def pn_steam(q):
     path = f"profiles/{q}" if re.fullmatch(r"7656119\d{10}", q) else f"id/{q}"
     r = get(f"https://steamcommunity.com/{path}/?xml=1", 12)
@@ -1619,21 +1616,6 @@ def pn_github(q):
             "local": hist_track(f"github:{j['id']}", j["login"]), "lien": j["html_url"]}
 
 
-def pn_discord(q):
-    created = snowflake_date(q)
-    name, note = None, ""
-    discord_token = secret_get("discord_token")
-    if discord_token:
-        r = get(f"https://discord.com/api/v10/users/{q}", 10, headers={"Authorization": "Bot " + discord_token})
-        if r.ok:
-            j = r.json()
-            name = j.get("username") + (f" (affiché : {j['global_name']})" if j.get("global_name") else "")
-        else:
-            note = f"Lecture Discord refusée (HTTP {r.status_code})."
-    else:
-        note = "Ajoute un token de bot Discord dans Réglages pour lire le pseudo actuel. L'historique se remplit à chaque recherche."
-    local = hist_track("discord:" + q, name) if name else [(r["nom"], "vu le " + r["vu"]) for r in hist_load().get("discord:" + q, [])]
-    return {"p": "Discord", "compte": f"{name or '?'} · ID {q} · compte créé le {created:%d/%m/%Y à %H:%M} UTC", "old": [], "local": local, "lien": f"https://discord.com/users/{q}", "note": note}
 
 
 WB_TARGETS = {
@@ -1749,10 +1731,11 @@ def prevname_core(q, names=None):
     tasks = []  # (libellé, fonction sans argument)
     if re.fullmatch(r"7656119\d{10}", q):
         tasks.append(("Steam", lambda: pn_steam(q)))
-    elif re.fullmatch(r"\d{17,20}", q):
-        tasks.append(("Discord", lambda: pn_discord(q)))
-    elif q.isdigit():
+    elif q.isdigit() and len(q) <= 10:
         tasks.append(("Roblox", lambda: pn_roblox(q)))
+    elif q.isdigit():
+        con.print(f"[{Y}]Cet identifiant numérique n'est pas pris en charge par les sources actuelles.[/]")
+        return
     else:
         for n in names:
             tasks += [("Steam", lambda n=n: pn_steam(n)), ("Roblox", lambda n=n: pn_roblox(n)), ("Minecraft", lambda n=n: pn_minecraft(n)),
@@ -1813,7 +1796,7 @@ def mod_prevname():
     con.rule(f"[{G}]⏳ PREVNAME · ANCIENS PSEUDOS")
     con.print(f"[{M}]Pseudo → Steam, Roblox, Minecraft, X, GitHub, Bluesky (historique complet), {len(REDIR_SITES)} sites qui redirigent les anciens pseudos,\n"
               f"et {len(WB_TARGETS)} plateformes dans les archives web (Wayback Machine).\n"
-              f"ID Steam64 (7656119…) → historique Steam · ID Discord (17-20 chiffres) → date de création · petit nombre → ID Roblox · DID Bluesky (did:plc:…) accepté.\n")
+              f"ID Steam64 (7656119…) → historique Steam · petit nombre → ID Roblox · DID Bluesky (did:plc:…) accepté.\n")
     q = Prompt.ask(f"[{G}]Pseudo ou ID").strip()
     if not q:
         return pause()
@@ -2046,7 +2029,7 @@ async function catReverse(la,lo){
 def quick_map(title, markers, extra_html="", circles=None, lines=None, base=None):
     """Page carte autonome : markers [{lat,lon,label(html),c}], circles [{lat,lon,r,c}], lines [[[lat,lon],...]]."""
     data = {"m": markers, "c": circles or [], "l": lines or [], "base": base}
-    return QUICK_TPL.replace("__LEAFLET__", LEAFLET_HEAD).replace("__TITLE__", escape_html(title)).replace("__EXTRA__", extra_html).replace("__DATA__", json.dumps(data)).replace("__DISCORD__", DISCORD)
+    return QUICK_TPL.replace("__LEAFLET__", LEAFLET_HEAD).replace("__TITLE__", escape_html(title)).replace("__EXTRA__", extra_html).replace("__DATA__", json.dumps(data))
 
 
 QUICK_TPL = r"""<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>__TITLE__</title>
@@ -2059,7 +2042,7 @@ header a{margin-left:auto;color:#8a8cff;font:13px monospace;text-decoration:none
 #map{height:calc(100vh - 52px)}body.ex-on #map{height:70vh}.ex{padding:14px 18px;font-size:14px;line-height:1.6;max-width:1100px}.ex a{color:var(--g)}
 .ex table{border-collapse:collapse;font:12px monospace;width:100%;background:var(--p);border:1px solid var(--l);border-radius:10px;overflow:hidden}
 .ex td,.ex th{border-bottom:1px solid var(--l);padding:6px 8px;text-align:left}.ex th{color:var(--g)}.leaflet-popup-content{font:13px/1.5 system-ui}.leaflet-popup-content a{color:#0a7}</style></head>
-<body><header><b>CAT.exe // __TITLE__</b><span class="n" id="cnt"></span><a href="__DISCORD__" target="_blank">◆ discord Cat.exe</a></header><div id="map"></div><div class="ex">__EXTRA__</div>
+<body><header><b>CAT.exe // __TITLE__</b><span class="n" id="cnt"></span></header><div id="map"></div><div class="ex">__EXTRA__</div>
 <script>const D=__DATA__;const map=catMap('map',{base:D.base});const g=L.featureGroup().addTo(map);
 D.c.forEach(c=>L.circle([c.lat,c.lon],{radius:c.r,color:c.c||'#b388ff',weight:1,fillOpacity:.15}).addTo(g));
 D.l.forEach(l=>L.polyline(l,{color:'#ffc861',weight:2}).addTo(g));
@@ -2518,7 +2501,7 @@ def mod_place():
 
 
 # ============================================================ SEARCH LOGO / IMAGE
-BRANDS = """Apple,Google,Microsoft,Amazon,Meta,Facebook,Instagram,WhatsApp,TikTok,Snapchat,X (Twitter),YouTube,Netflix,Spotify,Discord,Twitch,Reddit,LinkedIn,Pinterest,Telegram,
+BRANDS = """Apple,Google,Microsoft,Amazon,Meta,Facebook,Instagram,WhatsApp,TikTok,Snapchat,X (Twitter),YouTube,Netflix,Spotify,Twitch,Reddit,LinkedIn,Pinterest,Telegram,
 Signal,Zoom,Slack,Dropbox,Adobe,Samsung,Sony,LG,Huawei,Xiaomi,OnePlus,Oppo,Nokia,Motorola,Intel,AMD,Nvidia,Qualcomm,IBM,HP,Dell,Lenovo,Asus,Acer,MSI,Logitech,
 Razer,Corsair,Cisco,Oracle,SAP,Salesforce,PayPal,Visa,Mastercard,American Express,Stripe,Revolut,N26,Bitcoin,Ethereum,Binance,Coinbase,OpenAI,Anthropic,Tesla,
 BMW,Mercedes-Benz,Audi,Volkswagen,Porsche,Ferrari,Lamborghini,Toyota,Honda,Nissan,Mazda,Subaru,Hyundai,Kia,Ford,Chevrolet,Jeep,Dodge,Renault,Peugeot,Citroën,
@@ -2856,7 +2839,7 @@ def mod_ela():
     html = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ELA</title>
 <style>body{{margin:0;padding:16px;background:#07081a;color:#e4e9ff;font-family:system-ui}}h1{{font:600 16px monospace;color:#00e5ff}}.g{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}@media(max-width:800px){{.g{{grid-template-columns:1fr}}}}img{{width:100%;border-radius:8px}}td{{padding:6px;border-bottom:1px solid #2b3158;font-size:14px}}code{{font-size:12px}}</style></head><body>
 <h1>CAT.exe // ANALYSE DE RETOUCHES · {escape_html(Path(path).name)}</h1><div class="g"><div><p>Original</p><img src="data:image/jpeg;base64,{img_b64(img, 1400)}"></div><div><p>ELA : les zones nettement plus claires que le reste ont pu être modifiées (les bords et textes fins sont toujours clairs, c'est normal).</p><img src="data:image/jpeg;base64,{img_b64(ela, 1400)}"></div></div>
-<table>{rows}</table><p><code>{'<br>'.join(f'{k} : {v}' for k, v in hs.items())}</code></p><p><a style="color:#8a8cff" href="{DISCORD}">discord Cat.exe</a></p></body></html>"""
+<table>{rows}</table><p><code>{'<br>'.join(f'{k} : {v}' for k, v in hs.items())}</code></p></body></html>"""
     save_open("ela", html)
     add_report("Retouches", Path(path).name, "\n".join(f"[{s.upper()}] {x}" for s, x in F) + f"\nSHA-256 {hs['SHA-256']}")
     pause()
@@ -2982,7 +2965,7 @@ def mod_meta():
 BRAND_DOMAINS = ["paypal", "amazon", "apple", "icloud", "google", "microsoft", "outlook", "office", "netflix", "facebook", "instagram", "whatsapp", "tiktok", "snapchat",
                  "laposte", "colissimo", "chronopost", "dhl", "ups", "fedex", "ameli", "impots", "caf", "antai", "franceconnect", "ants", "creditagricole", "credit-agricole",
                  "labanquepostale", "bnpparibas", "societegenerale", "boursorama", "lcl", "caisse-epargne", "orange", "sfr", "free", "bouyguestelecom", "leboncoin",
-                 "vinted", "doctolib", "binance", "coinbase", "steam", "steamcommunity", "discord", "epicgames", "roblox", "spotify", "ebay", "cdiscount", "edf", "engie"]
+                 "vinted", "doctolib", "binance", "coinbase", "steam", "steamcommunity", "epicgames", "roblox", "spotify", "ebay", "cdiscount", "edf", "engie"]
 BAD_TLD = {"zip", "mov", "xyz", "top", "icu", "click", "live", "shop", "online", "site", "buzz", "monster", "rest", "cfd", "sbs", "lol", "quest", "gq", "tk", "ml", "cf", "ga", "work", "support", "help"}
 PHISH_WORDS = r"login|signin|verify|verification|update|secure|account|compte|confirm|paiement|payment|colis|livraison|amende|remboursement|suspend|bloqu|wallet|unlock|bonus|gift|cadeau"
 
@@ -3165,13 +3148,18 @@ OLLAMA = "http://localhost:11434"
 OLL = requests.Session()
 OLL.trust_env = False
 LAST = {"pos": None, "date": None}
+OLLAMA_CACHE = {"at": 0.0, "models": None}
 
 
-def ollama_models():
+def ollama_models(refresh=False):
+    if not refresh and time.time() - OLLAMA_CACHE["at"] < 20:
+        return OLLAMA_CACHE["models"]
     try:
-        return [m["name"] for m in OLL.get(OLLAMA + "/api/tags", timeout=3).json().get("models", [])]
+        models = [m["name"] for m in OLL.get(OLLAMA + "/api/tags", timeout=3).json().get("models", [])]
     except Exception:
-        return None
+        models = None
+    OLLAMA_CACHE.update(at=time.time(), models=models)
+    return models
 
 
 def ollama_has(models, m):
@@ -3223,6 +3211,7 @@ def ollama_setup(interactive=True, m=None):
         except Exception as e:
             log(f"Téléchargement du modèle impossible : {e}", R_STYLE)
             return None
+        ollama_models(refresh=True)
     return m
 
 
@@ -3966,10 +3955,7 @@ def chk_ai():
     return True if ollama_has(ms, CFG.get("ollama_text", "qwen2.5:3b")) else f"modèle {CFG.get('ollama_text')} à télécharger (Réglages)"
 
 
-def chk_discord():
-    j = get_json(f"https://discord.com/api/v10/invites/{DISCORD.rsplit('/', 1)[-1]}?with_counts=true", 6)
-    DINFO.update(name=(j.get("guild") or {}).get("name"), members=j.get("approximate_member_count"), online=j.get("approximate_presence_count"))
-    return f"ok · {DINFO['members']} membres · {DINFO['online']} en ligne"
+
 
 
 def boot():
@@ -3993,7 +3979,7 @@ def boot():
               ("IA géoloc locale GeoCLIP", lambda: True if geoclip_ready() else ("avec LANCER.bat uniquement" if getattr(sys, 'frozen', False) else "s'installe au 1er usage (menu 6)")),
               ("IA de vision locale (Ollama)", lambda: True if ollama_models() is not None else "s'installe au 1er usage (menu 6)"),
               ("Analyse de numéros", lambda: True if phonenumbers else "absent : pip install phonenumbers"),
-              (f"Base pseudos : {len(SITES)} sites", lambda: True), ("Serveur Discord Cat.exe", chk_discord)]
+              (f"Base pseudos : {len(SITES)} sites", lambda: True)]
     for name, fn in checks:
         with con.status(f"[{M}]{name}…", spinner="dots"):
             try:
@@ -4153,11 +4139,6 @@ def decode_id(s):
             out.append(("X / Twitter (post)", None, "post d'avant novembre 2010 : pas de date cachée dans cet ancien ID"))
         else:
             ms((int(m.group(1)) >> 22) + 1288834974657, "X / Twitter (post)", "date de publication")
-    m = re.search(r"discord(?:app)?\.com/channels/([\d@me]+)/(\d+)(?:/(\d+))?", s)
-    if m:
-        for lab, g in (("serveur", 1), ("salon", 2), ("message", 3)):
-            if m.group(g) and m.group(g).isdigit():
-                ms((int(m.group(g)) >> 22) + 1420070400000, f"Discord ({lab})", "date de création")
     m = re.search(r"(instagram\.com|threads\.(?:net|com))/(?:[^/]+/)?(?:p|reel|reels|tv|post)/([A-Za-z0-9_-]{6,})", s)
     if m:
         try:
@@ -4185,7 +4166,6 @@ def decode_id(s):
         for div, lab in ((1, "Timestamp Unix (secondes)"), (1000, "Timestamp Unix (millisecondes)"), (10 ** 6, "Timestamp Unix (microsecondes)"), (10 ** 9, "Timestamp Unix (nanosecondes)")):
             ms(n * 1000 / div, lab)
         if n > 10 ** 14:
-            ms((n >> 22) + 1420070400000, "Snowflake Discord", "ID utilisateur / message / serveur")
             ms((n >> 22) + 1288834974657, "Snowflake X / Twitter", "ID de post")
             ms((n >> 32) * 1000, "ID TikTok", "vidéo")
             ms((n >> 23) + 1314220021721, "ID Instagram", "publication")
@@ -4220,7 +4200,7 @@ def decode_id(s):
 def mod_ids():
     con.rule(f"[{G}]🆔 DÉCODEUR D'ID & DATES CACHÉES")
     con.print(f"[{M}]Colle un lien ou un identifiant : la date est souvent cachée dedans, même si le post est supprimé ou la date masquée.\n"
-              "TikTok · X/Twitter · Instagram · Threads · Discord · LinkedIn · Bluesky · Mastodon · Steam64 · timestamps Unix/Windows/Apple · UUID · ObjectId · ULID\n")
+              "TikTok · X/Twitter · Instagram · Threads · LinkedIn · Bluesky · Mastodon · Steam64 · timestamps Unix/Windows/Apple · UUID · ObjectId · ULID\n")
     while True:
         s = Prompt.ask(f"[{G}]Lien ou ID [{M}](Entrée = retour)", default="", show_default=False).strip()
         if not s:
@@ -4446,7 +4426,7 @@ header b{font-family:monospace;color:#00e5ff}header a{margin-left:auto;color:#8a
 .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid #2b3158;font:13px monospace}
 select,button,input{background:#14173a;border:1px solid #2b3158;color:#e4e9ff;padding:6px 9px;border-radius:7px;font:13px monospace}button{cursor:pointer}button:hover{border-color:#00e5ff}
 .k{color:#b388ff}.g{color:#00e5ff}.m{color:#7480a8}input[type=range]{width:180px;accent-color:#00e5ff}</style></head><body>
-<header><b>CAT.exe // SATELLITE D'AVANT</b><span class="m">__PLACE__</span><a href="__DISCORD__" target="_blank">discord Cat.exe</a></header>
+<header><b>CAT.exe // SATELLITE D'AVANT</b><span class="m">__PLACE__</span></header>
 <div class="bar"><span class="k">AVANT</span><button id="ap">◀</button><select id="a"></select><button id="an">▶</button>
 <span class="g">APRÈS</span><button id="bp">◀</button><select id="b"></select><button id="bn">▶</button>
 <span class="m">mélange</span><input type="range" id="op" min="0" max="100" value="100"><span id="ov" class="m">100 % après</span>
@@ -4483,7 +4463,7 @@ def mod_satellite():
     rel.sort(key=lambda r: r["d"])
     log(f"{len(rel)} versions de {rel[0]['d']} à {rel[-1]['d']}", G)
     html = (SAT_TPL.replace("__LEAFLET__", LEAFLET_HEAD).replace("__REL__", json.dumps(rel)).replace("__LAT__", f"{p[0]:.6f}").replace("__LON__", f"{p[1]:.6f}")
-            .replace("__PLACE__", escape_html(place_name(*p) or f"{p[0]:.5f}, {p[1]:.5f}")).replace("__DISCORD__", DISCORD))
+            .replace("__PLACE__", escape_html(place_name(*p) or f"{p[0]:.5f}, {p[1]:.5f}")))
     save_open("satellite", html)
     con.print(f"[{M}]Dans la page : choisis une date « avant » et « après », puis fais glisser le curseur « mélange » pour voir ce qui a changé.")
     add_report("Satellite d'avant", f"{p[0]:.5f}, {p[1]:.5f}", f"{len(rel)} versions d'images ({rel[0]['d']} → {rel[-1]['d']})")
@@ -4676,7 +4656,7 @@ EXTRACT = [
     ("Liens", r"https?://[^\s\"'<>()]+"),
     ("IPv4", r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"),
     ("Pseudos @", r"(?<![\w.])@[A-Za-z0-9_.]{3,30}\b"),
-    ("Profils réseaux", r"(?:instagram\.com|tiktok\.com/@|twitter\.com|x\.com|facebook\.com|youtube\.com/(?:@|c/|channel/)|t\.me|discord\.gg|snapchat\.com/add|linkedin\.com/in|github\.com|twitch\.tv|reddit\.com/u(?:ser)?)/[A-Za-z0-9_.@-]{2,60}"),
+    ("Profils réseaux", r"(?:instagram\.com|tiktok\.com/@|twitter\.com|x\.com|facebook\.com|youtube\.com/(?:@|c/|channel/)|t\.me|snapchat\.com/add|linkedin\.com/in|github\.com|twitch\.tv|reddit\.com/u(?:ser)?)/[A-Za-z0-9_.@-]{2,60}"),
     ("Bitcoin", r"\b(?:bc1[a-z0-9]{25,60}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\b"),
     ("Ethereum", r"\b0x[a-fA-F0-9]{40}\b"),
     ("Monero", r"\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b"),
@@ -5122,7 +5102,7 @@ def report_pdf(syn, path):
             self.set_y(-12)
             self.set_font(F, "", 8)
             self.set_text_color(125, 143, 155)
-            self.cell(0, 6, clean(f"Cat.exe OSINT v{VERSION} · {DISCORD[8:]} · page {self.page_no()}"), align="C")
+            self.cell(0, 6, clean(f"Cat.exe OSINT v{VERSION} · page {self.page_no()}"), align="C")
 
     pdf = PDF(format="A4")
     if fonts:
@@ -5142,7 +5122,7 @@ def report_pdf(syn, path):
     pdf.cell(0, 9, "CAT.EXE // RAPPORT OSINT", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font(F, "", 9)
     pdf.set_text_color(160, 175, 185)
-    pdf.cell(0, 6, clean(f"{datetime.datetime.now():%d/%m/%Y %H:%M} · {len(REPORT)} élément(s) · Discord : {DISCORD}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, clean(f"{datetime.datetime.now():%d/%m/%Y %H:%M} · {len(REPORT)} élément(s)"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_y(42)
 
     def block(tag, title, when, text, col=(255, 61, 139)):
@@ -5206,7 +5186,7 @@ h1{{margin:0;font:800 26px monospace;color:var(--g);letter-spacing:1px}}.m{{colo
 section{{background:var(--p);border:1px solid var(--l);border-radius:12px;padding:14px 16px;margin:14px 0}}section.ia{{border-color:#4a3fa0}}
 h2{{font-size:15px;margin:0 0 4px}}h2 span{{background:var(--k);color:#fff;font:700 11px monospace;padding:2px 7px;border-radius:5px;margin-right:8px}}
 pre{{white-space:pre-wrap;font:12.5px/1.55 ui-monospace,monospace;margin:8px 0 0}}a{{color:#8a8cff}}@media print{{body{{background:#fff;color:#111}}section{{background:#fff}}}}</style></head>
-<body><header><h1>CAT.EXE // RAPPORT OSINT</h1><div class="m">{datetime.datetime.now():%d/%m/%Y %H:%M} · {len(REPORT)} élément(s) · <a href="{DISCORD}">{DISCORD[8:]}</a></div></header><main>{body}</main></body></html>""", encoding="utf-8")
+<body><header><h1>CAT.EXE // RAPPORT OSINT</h1><div class="m">{datetime.datetime.now():%d/%m/%Y %H:%M} · {len(REPORT)} élément(s)</div></header><main>{body}</main></body></html>""", encoding="utf-8")
         log(f"Rapport HTML : {f}", G)
         open_file(f)
     pause()
@@ -6920,65 +6900,6 @@ def mod_wmn(u=None):
     pause()
 
 
-# ------------------------------------------------------------ DISCORD LOOKUP
-def snow_dt(i):
-    return datetime.datetime.fromtimestamp(((int(i) >> 22) + 1420070400000) / 1000, datetime.timezone.utc).replace(tzinfo=None)
-
-
-def fdt(dt):
-    a, b = fmt_dt(dt.replace(tzinfo=None))
-    return f"{a} · heure de Paris {b[-8:]}" if b != "—" else a
-
-
-def mod_discord():
-    con.rule(f"[{G}]💬 DISCORD LOOKUP")
-    c = select("Que veux-tu analyser ?", [{"label": "🔗 Invitation", "value": "inv", "desc": "discord.gg/… → serveur, membres, créateur"},
-                                          {"label": "🆔 ID (serveur, salon, message, compte)", "value": "id", "desc": "date de création"},
-                                          {"label": "👤 Compte par ID", "value": "user", "desc": "nécessite un token de bot (Réglages)"},
-                                          {"label": "📡 Widget d'un serveur", "value": "wid", "desc": "membres en ligne si le widget est activé"}])
-    if c is None:
-        return
-    q = ask_text("Invitation ou ID").strip()
-    if not q:
-        return
-    try:
-        if c == "inv":
-            code = q.rstrip("/").rsplit("/", 1)[-1]
-            j = get_json(f"https://discord.com/api/v10/invites/{code}?with_counts=true&with_expiration=true", 10)
-            g, inv, ch = j.get("guild") or {}, j.get("inviter") or {}, j.get("channel") or {}
-            p = kv([("Serveur", g.get("name")), ("ID serveur", g.get("id")), ("Serveur créé le", fdt(snow_dt(g["id"])) if g.get("id") else None),
-                    ("Description", g.get("description")), ("Membres / en ligne", f"{j.get('approximate_member_count')} / {j.get('approximate_presence_count')}"),
-                    ("Salon", f"#{ch.get('name')} ({ch.get('id')})"), ("Lien perso (vanity)", g.get("vanity_url_code")),
-                    ("Niveau de vérification", g.get("verification_level")), ("Options", ", ".join(g.get("features") or [])[:400]),
-                    ("Invitation créée par", f"{inv.get('username')} ({inv.get('global_name') or ''}) · ID {inv.get('id')}" if inv else None),
-                    ("Compte du créateur créé le", fdt(snow_dt(inv["id"])) if inv.get("id") else None), ("Expire", j.get("expires_at") or "jamais"),
-                    ("Icône", f"https://cdn.discordapp.com/icons/{g['id']}/{g['icon']}.png?size=1024" if g.get("icon") else None)], f"💬 {g.get('name', code)}", G)
-            con.print(p)
-            add_report("Discord", code, f"{g.get('name')} · ID {g.get('id')} · {j.get('approximate_member_count')} membres · invité par {inv.get('username')}")
-        elif c == "id":
-            d = snow_dt(re.sub(r"\D", "", q))
-            con.print(kv([("Créé le", fdt(d)), ("Il y a", human_age(d)), ("Worker / process", f"{(int(q) >> 17) & 31} / {(int(q) >> 12) & 31}")], f"🆔 {q}", G))
-        elif c == "user":
-            discord_token = secret_get("discord_token")
-            if not discord_token:
-                log("Ajoute un token de bot Discord dans Réglages.", Y)
-            else:
-                j = get_json(f"https://discord.com/api/v10/users/{q}", 10, headers={"Authorization": "Bot " + discord_token})
-                con.print(kv([("Pseudo", j.get("username")), ("Nom affiché", j.get("global_name")), ("Bot", j.get("bot")), ("Créé le", fdt(snow_dt(q))),
-                              ("Avatar", f"https://cdn.discordapp.com/avatars/{q}/{j['avatar']}.png?size=1024" if j.get("avatar") else None),
-                              ("Bannière", f"https://cdn.discordapp.com/banners/{q}/{j['banner']}.png?size=1024" if j.get("banner") else None),
-                              ("Couleur", j.get("banner_color"))], f"👤 {j.get('username')}", G))
-        else:
-            j = get_json(f"https://discord.com/api/guilds/{re.sub(r'\\D', '', q)}/widget.json", 10)
-            ms = [f"{m.get('username')} · {m.get('status')}" + (f" · joue à {m['game']['name']}" if m.get("game") else "") for m in j.get("members", [])]
-            con.print(kv([("Serveur", j.get("name")), ("En ligne", j.get("presence_count")), ("Invitation", j.get("instant_invite"))], "📡 Widget", G))
-            if ms:
-                table_pages("Membres en ligne", ["Membre"], [[m] for m in ms])
-    except requests.HTTPError as e:
-        log(f"Introuvable ou privé ({e.response.status_code}).", Y)
-    except Exception as e:
-        log(f"Erreur : {e}", R)
-    pause()
 
 
 # ------------------------------------------------------------ RECHERCHE DE PERSONNE
@@ -7134,7 +7055,7 @@ def mod_toolbox():
                     con.print(kv(rows, f"⌛ {v}", G))
                 else:
                     d = datetime.datetime.strptime(v, "%d/%m/%Y %H:%M" if ":" in v else "%d/%m/%Y").replace(tzinfo=datetime.timezone.utc)
-                    con.print(kv([("Unix", int(d.timestamp())), ("Unix ms", int(d.timestamp() * 1000)), ("Snowflake Discord min", (int(d.timestamp() * 1000) - 1420070400000) << 22)], f"⌛ {v} UTC", G))
+                    con.print(kv([("Unix", int(d.timestamp())), ("Unix ms", int(d.timestamp() * 1000))], f"⌛ {v} UTC", G))
             elif c == "pw":
                 al = string.ascii_letters + string.digits + "!#$%&*+-=?@_"
                 mots = ["chat", "pixel", "nuage", "radar", "tigre", "lune", "orage", "cactus", "piano", "fusee", "glace", "noyau", "dragon", "ombre", "volcan", "marbre", "laser", "rivage", "comete", "zebre"]
@@ -7434,7 +7355,7 @@ def mod_breaches():
 GTYPES = {"enquete": ("#d4a35a", "Enquête", "🧬"), "pseudo": ("#5aa9e6", "Pseudo", "👤"), "compte": ("#8fa3b8", "Compte", "🪪"), "personne": ("#e8b04a", "Personne", "🧍"),
           "email": ("#e57c9a", "Email", "📧"), "telephone": ("#6cc28f", "Téléphone", "📱"), "ip": ("#e0605e", "IP", "🧭"), "domaine": ("#9b8ce0", "Domaine", "🌐"),
           "url": ("#7f8c99", "Lien", "🔗"), "lieu": ("#59b86a", "Lieu", "📍"), "image": ("#d47fbf", "Image", "🖼"), "crypto": ("#d9b54a", "Crypto", "₿"),
-          "discord": ("#7c86e8", "Discord", "💬"), "fuite": ("#d94b4b", "Fuite", "💧"), "organisation": ("#d98c3a", "Organisation", "🏢"),
+"fuite": ("#d94b4b", "Fuite", "💧"), "organisation": ("#d98c3a", "Organisation", "🏢"),
           "note": ("#c9c9c9", "Note", "📝"), "autre": ("#8a8f96", "Autre", "◆")}
 
 TRANSFORMS = {
@@ -7592,7 +7513,7 @@ def _safe(fn, *a):
 
 
 
-MOD_TYPE = {"Réseaux sociaux": "compte", "WhatsMyName": "pseudo", "IP lookup": "ip", "Discord": "discord", "Recherche de personne": "personne",
+MOD_TYPE = {"Réseaux sociaux": "compte", "WhatsMyName": "pseudo", "IP lookup": "ip", "Recherche de personne": "personne",
             "Image → coordonnées": "image", "Pseudos": "pseudo", "Prevname": "pseudo", "Email": "email", "Téléphone": "telephone", "Domaine": "domaine",
             "Crypto": "crypto", "Géoloc": "image", "Métadonnées": "image", "Fuite de mot de passe": None}
 _G = {}
@@ -7781,7 +7702,7 @@ footer .sp{margin-left:auto}
  <form id="addf" autocomplete="off"><div class="inp"><span id="addic"></span><input id="addv" placeholder="Nouvelle cible : pseudo, email, IP, domaine, lien, Prénom Nom…"></div>
   <select id="addt" title="Type (détecté tout seul)"></select><button type="submit" title="Ajouter au dossier">Ajouter</button><button type="button" id="addall" class="pri" title="Ajouter puis lancer toutes les recherches"></button></form>
  <div class="tools">
-  <div class="inp hide-s" style="width:170px;flex:none"><span id="qic"></span><input id="q" placeholder="Filtrer  /"></div>
+  <div class="inp hide-s" style="width:170px;flex:none"><span id="qic"></span><input id="q" placeholder="Filtrer  /"></div><button type="button" id="qmode" class="ghost" title="Correspondance littérale">Exact</button>
   <div class="dd"><button id="more" class="ghost" title="Options"></button><div class="menu" id="menu">
    <div class="h">Disposition</div><div class="i" data-m="force">Libre (physique)</div><div class="i" data-m="hier">Arbre hiérarchique</div><div class="i" data-m="circle">Cercle</div><div class="i" data-m="type">Colonnes par type</div>
    <div class="h">Analyse</div><div class="i" data-m="path">Chemin entre 2 éléments (Ctrl + clic)</div><div class="i" data-m="clu">Regrouper / dégrouper par type</div><div class="i" data-m="keys">Ne montrer que les pistes clés</div><div class="i" data-m="nofaux">Masquer les fausses pistes</div><div class="i" data-m="phys">Figer / animer</div>
@@ -7814,7 +7735,6 @@ url:'<path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2"/><p
 lieu:'<path d="M12 21.5s-7-7.2-7-12.2a7 7 0 0 1 14 0c0 5-7 12.2-7 12.2z"/><circle cx="12" cy="9.3" r="2.6"/>',
 image:'<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9.5" r="1.8"/><path d="M3.5 18l5.5-5.5 4 4 3-3 4.5 4.5"/>',
 crypto:'<circle cx="12" cy="12" r="9"/><path d="M9.5 7.5h4a2.2 2.2 0 0 1 0 4.4h-4zM9.5 11.9h4.6a2.3 2.3 0 0 1 0 4.6H9.5zM9.5 7.5v9M11 6v1.5M11 16.5V18"/>',
-discord:'<path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 11h.01M12 11h.01M16 11h.01"/>',
 fuite:'<path d="M12 2.8s-6.5 7.4-6.5 12a6.5 6.5 0 0 0 13 0c0-4.6-6.5-12-6.5-12z"/><path d="M9 15.5a3 3 0 0 0 3 3"/>',
 organisation:'<rect x="4" y="3" width="11" height="18" rx="1"/><path d="M15 9h4a1 1 0 0 1 1 1v11M7.5 7h4M7.5 11h4M7.5 15h4M9.5 21v-2.5"/>',
 note:'<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h7"/>',
@@ -7826,7 +7746,7 @@ trash:'<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',check:'<path d="M5 12.5l4
 doc:'<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 13h6M9 17h4"/>'};
 const ico=(k,c)=>`<svg class="i" viewBox="0 0 24 24"${c?` style="color:${c}"`:''}>${P[k]||P.autre}</svg>`;
 const ST={ok:['Confirmé','#4caf7a'],check:['À vérifier','#e0a83a'],faux:['Fausse piste','#6b7079']};
-let G={nodes:{},edges:[],rev:-1},net,N,E,hidden=new Set(),sel=null,linkFrom=null,saving=false,busy=0,clustered=false,pathSet=null,manualType=false,REAL=0,childOf=null,tab='dossier',onlyKeys=false,noFaux=false,PH='';
+let G={nodes:{},edges:[],rev:-1},net,N,E,hidden=new Set(),sel=null,linkFrom=null,saving=false,busy=0,clustered=false,pathSet=null,manualType=false,REAL=0,childOf=null,tab='dossier',onlyKeys=false,noFaux=false,PH='',qmode='exact';
 const T=t=>TYPES[t]||TYPES.autre,col=t=>T(t)[0],tn=t=>T(t)[1];
 function toast(h,ms){const t=$('toast');t.innerHTML=h;t.style.display='block';clearTimeout(t._t);if(ms)t._t=setTimeout(()=>t.style.display='none',ms)}
 function now(){return new Date().toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})}
@@ -7999,15 +7919,19 @@ function start(){N=new vis.DataSet();E=new vis.DataSet();
  poll();setInterval(()=>{if(!busy)poll()},2000)}
 /* ---------- interface */
 PH=$('addv').placeholder;$('addt').innerHTML=Object.keys(TYPES).filter(k=>k!='enquete').map(k=>`<option value="${k}">${esc(tn(k))}</option>`).join('');
-$('caseic').innerHTML=ico('enquete');$('emptyic').innerHTML=ico('enquete');$('qic').innerHTML=ico('search');$('addall').innerHTML=ico('bolt')+' Ajouter + chercher';$('more').innerHTML=ico('dots')+' Options';$('zfit').innerHTML=ico('fit');setAddIcon();
+ $('caseic').innerHTML=ico('enquete');$('emptyic').innerHTML=ico('enquete');$('qic').innerHTML=ico('search');$('addall').innerHTML=ico('bolt')+' Ajouter + chercher';$('more').innerHTML=ico('dots')+' Options';$('zfit').innerHTML=ico('fit');setAddIcon();
 $('addv').oninput=ev=>{if(!manualType)$('addt').value=ttype(ev.target.value)||'pseudo';setAddIcon()};$('addt').onchange=()=>{manualType=true;setAddIcon()};
 $('addf').onsubmit=ev=>{ev.preventDefault();submitAdd(false)};$('addall').onclick=()=>submitAdd(true);
 $('more').onclick=ev=>{ev.stopPropagation();const M=$('menu');M.style.display=M.style.display=='block'?'none':'block'};
 $('menu').querySelectorAll('.i').forEach(i=>i.onclick=()=>menu(i.dataset.m));
 $('zin').onclick=()=>net.moveTo({scale:net.getScale()*1.25,animation:true});$('zout').onclick=()=>net.moveTo({scale:net.getScale()/1.25,animation:true});$('zfit').onclick=()=>net.fit({animation:true});
 $('imp').onchange=async ev=>{const f=ev.target.files[0];if(!f)return;try{const g=JSON.parse(await f.text());Object.assign(G.nodes,g.nodes||{});(g.edges||[]).forEach(e=>G.edges.push(e));logp('Import : '+f.name);render();save();toast('Importé',3000)}catch(e){toast('Fichier invalide',3000)}};
-$('q').oninput=ev=>{const q=ev.target.value.toLowerCase();if(!q){dim(null);return}const hit=Object.keys(G.nodes).filter(id=>(G.nodes[id].label+JSON.stringify(G.nodes[id].data||{})).toLowerCase().includes(q));
- N.update(N.get().map(n=>({id:n.id,opacity:hit.includes(n.id)?1:.1})));if(hit.length==1)focusN(hit[0])};
+function normQ(s){return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()}
+function edit1(a,b){if(a===b)return true;if(Math.abs(a.length-b.length)>1)return false;if(a.length===b.length){let n=0;for(let i=0;i<a.length;i++)if(a[i]!==b[i]&&++n>1)return false;return true}let x=0,y=0,n=0;while(x<a.length&&y<b.length){if(a[x]===b[y]){x++;y++}else{if(++n>1)return false;if(a.length<b.length)y++;else x++}}return true}
+function approxQ(q,text){const a=normQ(q),b=normQ(text);if(b.includes(a))return true;const words=b.split(/[^\p{L}\p{N}._-]+/u).filter(Boolean);return a.split(/\s+/).every(w=>words.includes(w)||(w.length>=4&&words.some(x=>x.length>=4&&edit1(w,x))))}
+function applyQ(){const raw=$('q').value;if(!raw){dim(null);return}const hit=Object.keys(G.nodes).filter(id=>{const text=G.nodes[id].label+JSON.stringify(G.nodes[id].data||{});return qmode==='exact'?text.includes(raw):approxQ(raw,text)});
+ N.update(N.get().map(n=>({id:n.id,opacity:hit.includes(n.id)?1:.1})));if(hit.length==1)focusN(hit[0])}
+$('q').oninput=applyQ;$('qmode').onclick=()=>{qmode=qmode==='exact'?'approx':'exact';$('qmode').textContent=qmode==='exact'?'Exact':'Approx';$('qmode').title=qmode==='exact'?'Correspondance littérale':'Casse/accents ignorés, une modification tolérée';applyQ()};
 document.addEventListener('keydown',ev=>{if(['INPUT','TEXTAREA','SELECT'].includes(ev.target.tagName)){if(ev.key=='Escape')ev.target.blur();return}
  if(ev.key=='/'){ev.preventDefault();$('q').focus()}else if(ev.key=='f'||ev.key=='F')net.fit({animation:true});
  else if(ev.key=='Escape'){linkFrom=null;childOf=null;$('addv').placeholder=PH;pathSet=null;$('toast').style.display='none';$('ctx').style.display='none';net.unselectAll();sel=null;tab='dossier';render();dim(null)}
@@ -8091,7 +8015,7 @@ C'est le point le plus important :
 - **iPhone** : Photos → la photo → Partager → *Options* → active **Toutes les données de la photo** → *Enregistrer dans Fichiers* (ou AirDrop vers le PC).
 - **Android** : Galerie → Partager → envoie **en fichier** (Gmail, Drive, câble USB). Sur Google Photos : *⋮ → Télécharger*.
 - **WhatsApp** : demande l'envoi **en Document** (trombone → Document), pas en photo : en photo, WhatsApp efface le GPS.
-- **Discord / Telegram (en fichier)** : clic droit → *Enregistrer l'image* garde souvent les données.
+- **Telegram (en fichier)** : clic droit → *Enregistrer l'image* garde souvent les données.
 - **Instagram, TikTok, X, Facebook, Snapchat** effacent toujours le GPS → l'outil passe alors à l'**IA** (GeoCLIP + vision) et aux indices visuels.
 - **Sur PC** : glisse le fichier directement dans la fenêtre noire, le chemin se colle tout seul."""
 
@@ -8970,7 +8894,7 @@ Trouver les **webcams publiques officielles** autour d'un lieu (météo, tourism
 - Le **time-lapse de la journée** permet de comparer la météo à l'heure d'une photo.
 - À utiliser pour vérifier un lieu, pas pour suivre des personnes.""",
 "mod_holehe": """### 🎯 À quoi ça sert
-Savoir **sur quels sites un email a un compte** (Instagram, Spotify, Amazon, Discord…), comme l'outil **Holehe**. La personne n'est pas prévenue.
+Savoir **sur quels sites un email a un compte** (Instagram, Spotify, Amazon…), comme l'outil **Holehe**. La personne n'est pas prévenue.
 ### 🧰 Ce qu'il te faut
 - Un **email**.
 - Rien d'autre : 7 sites sont testés directement (Gravatar, Duolingo, Chess.com, Spotify, WordPress, X, Adobe).
@@ -9087,15 +9011,6 @@ Le site de l'entreprise (`societe.fr`) ou la fin d'un email d'un collègue (`@so
 ### ⚠️ Cadre
 Pour toi-même, un contact pro ou une vérification. Jamais pour harceler quelqu'un (c'est puni par la loi).""",
 
-"mod_discord": """### 🎯 À quoi ça sert
-Analyser une **invitation Discord** (serveur, ID, date de création, membres, qui a créé l'invitation), dater **n'importe quel ID**, voir les membres en ligne d'un **widget**.
-### 🔎 Où trouver les infos
-- **Invitation** : le lien `discord.gg/xxxx` (le code seul marche aussi).
-- **ID** : Discord → *Paramètres → Avancés → Mode développeur* : ON. Ensuite **clic droit** sur un serveur, salon, message ou membre → *Copier l'identifiant*.
-- **Compte par ID** : il faut un **token de bot** (Réglages) : discord.com/developers → *New Application* → *Bot* → *Reset Token*.
-### 💡 Astuces
-- L'ID contient la **date exacte** de création : pratique pour repérer un compte créé la veille (faux compte).
-- Le widget ne marche que si le serveur l'a activé.""",
 
 "mod_user": """### 🎯 À quoi ça sert
 Chercher un pseudo sur **95 sites** avec ses variantes (`_` `.` `-`) et donner un niveau d'exposition.
@@ -9147,11 +9062,10 @@ Message d'arnaque, page de don, bio, QR code (scanne-le avec ton téléphone et 
 - Beaucoup d'entrées récentes sur une adresse d'« investissement » = arnaque qui tourne.""",
 
 "mod_ids": """### 🎯 À quoi ça sert
-Retrouver la **date cachée** dans un lien ou un ID : TikTok, X, Instagram, Discord, Bluesky, LinkedIn, Mastodon…
+Retrouver la **date cachée** dans un lien ou un ID : TikTok, X, Instagram, Bluesky, LinkedIn, Mastodon…
 ### 🔎 Où trouver l'ID
 - **TikTok** : lien de la vidéo → le grand nombre après `/video/`.
 - **X / Twitter** : le nombre après `/status/`.
-- **Discord** : mode développeur → clic droit → *Copier l'identifiant*.
 - **LinkedIn** : lien du post (`activity-7234…`).
 ### 💡 Astuces
 Colle **le lien entier**, l'outil trouve l'ID tout seul. Pratique pour savoir si une vidéo « d'aujourd'hui » date en fait de 2019.""",
@@ -9435,7 +9349,7 @@ Regrouper **tout ce que tu as trouvé pendant la session** dans un rapport **PDF
 Lance le rapport **avant de quitter** : la session n'est pas gardée à la fermeture (le graphe, lui, est sauvegardé).""",
 
 "mod_settings": """### 🎯 À quoi ça sert
-Choisir la **langue**, les **modèles d'IA locale** (Ollama), les animations, le token Discord.
+Choisir la **langue**, les **modèles d'IA locale** (Ollama) et les animations.
 ### 🧰 IA locale : ce qu'il faut savoir
 - Tout tourne **sur ton PC** : rien n'est envoyé sur internet.
 - **8 Go de RAM** : `qwen2.5:3b` (conseillé). **16 Go** : `qwen2.5:7b` (plus intelligent).
@@ -9485,11 +9399,12 @@ def mod_cyber_catalog():
         return
     tools = catalog["tools"]
     repo = catalog.get("source", {}).get("repository", "https://github.com/diego1505-Art/hacking-ethique")
-    filters = {"category": None, "risk": None, "platform": None, "query": ""}
+    filters = {"category": None, "risk": None, "platform": None, "query": "", "mode": EXACT}
     while True:
-        active = ", ".join(f"{k}={v}" for k, v in filters.items() if v) or "aucun filtre"
+        active = ", ".join(f"{k}={v}" for k, v in filters.items() if v and not (k == "mode" and v == EXACT)) or "aucun filtre"
         action = select("🛡️ CATALOGUE CYBER", [
             {"label": "🔎 Rechercher", "value": "search", "desc": "nom, description, catégorie, langage"},
+            {"label": f"🎯 Mode de recherche : {'Exact' if filters['mode'] == EXACT else 'Approx'}", "value": "mode", "desc": "Approx tolère casse, accents et une modification d’un caractère (mots ≥ 4 lettres)"},
             {"label": "🗂️ Filtrer par catégorie", "value": "category", "desc": "catégories issues de la source"},
             {"label": "⚠️ Filtrer par risque", "value": "risk", "desc": "faible · moyen · élevé"},
             {"label": "💻 Filtrer par plateforme", "value": "platform", "desc": "Windows · Linux · macOS · Web · Docker"},
@@ -9502,6 +9417,11 @@ def mod_cyber_catalog():
             return
         if action == "search":
             filters["query"] = ask_text("Recherche", filters["query"]).strip()
+        elif action == "mode":
+            value = select("Mode de recherche", [{"label": "Exact (par défaut)", "value": EXACT, "desc": "texte littéral, sensible à la casse et aux accents"},
+                                                   {"label": "Approx", "value": APPROX, "desc": "insensible à la casse/aux accents, tolère une modification de caractère"}], default=filters["mode"])
+            if value:
+                filters["mode"] = value
         elif action == "category":
             value = select("Catégorie", [{"label": "Toutes", "value": None, "desc": "retirer le filtre"}] + [{"label": x, "value": x, "desc": ""} for x in cyber_categories(tools)], default=filters["category"])
             filters["category"] = value
@@ -9512,7 +9432,7 @@ def mod_cyber_catalog():
             value = select("Plateforme", [{"label": "Toutes", "value": None, "desc": "retirer le filtre"}] + [{"label": x, "value": x, "desc": ""} for x in cyber_platforms(tools)], default=filters["platform"])
             filters["platform"] = value
         elif action == "reset":
-            filters = {"category": None, "risk": None, "platform": None, "query": ""}
+            filters = {"category": None, "risk": None, "platform": None, "query": "", "mode": EXACT}
         elif action == "source":
             webbrowser.open(repo)
         elif action == "list":
@@ -9557,7 +9477,7 @@ def mod_cyber_catalog():
                     break
 
 
-SECTIONS = build_sections(len(LEARN_LANGS), DISCORD)
+SECTIONS = build_sections(len(LEARN_LANGS))
 
 
 def main_items():
@@ -9597,7 +9517,6 @@ def main_side(it):
 def status_line():
     ai = f"[{G}]●[/] IA locale" if chk_ai() is True else f"[{M}]○ IA locale[/]"
     vis = ""
-    dc = f"[#8a8cff]◆[/] {DISCORD[8:]}" + (f" [{M}]· {DINFO['members']} membres · {DINFO['online']} en ligne[/]" if DINFO.get("members") else "")
     rep = f"   [{P}]■[/] {len(REPORT)} dans le rapport" if REPORT else ""
     try:
         g = gload()
@@ -9605,7 +9524,29 @@ def status_line():
         rep += f"   [{P}]▣[/] dossier « {escape(g['name'].replace('_', ' '))} » · {ne} entité(s)"
     except Exception:
         pass
-    return f"  [{P}]// OSINT · GEOINT v{VERSION}[/]   {ai}   {vis}   {dc}{rep}"
+    return f"  [{P}]// OSINT · GEOINT v{VERSION}[/]   {ai}   {rep}"
+
+
+def ai_deepen_new_results(fn, label, report_start):
+    """Propose une analyse locale commune aux modules qui viennent d'ajouter des résultats."""
+    if fn == "mod_report":
+        return
+    entries = REPORT[report_start:]
+    if not entries:
+        return
+    if not ask_yes(f"Lancer une analyse IA locale approfondie des {len(entries)} résultat(s) de « {label} » ?"):
+        return
+    facts = "\n\n".join(f"[{item['mod']}] {item['title']}\n{item['text']}" for item in entries)
+    prompt = (
+        "Tu es un assistant d'analyse OSINT et de vérification. Analyse uniquement les résultats factuels fournis. "
+        "Sépare clairement faits, hypothèses et limites; ne complète jamais une donnée manquante par invention. "
+        "Signale les contradictions, propose des pistes de recherche suivantes non exécutées et rappelle quand une vérification humaine est nécessaire. "
+        "Réponds en français, de façon concise et structurée. Ces données sont traitées par l'IA locale de l'utilisateur.\n\n"
+        f"Module : {label}\nRésultats :\n{facts[:14000]}"
+    )
+    analysis = ai_print(prompt, f"Analyse approfondie · {label}", task="analysis")
+    if analysis:
+        add_report("IA locale", f"Analyse approfondie · {label}", analysis)
 
 
 def main():
@@ -9647,12 +9588,8 @@ def main():
         if fn == "quit":
             if CFG.get("anim", True):
                 typewrite("  Déconnexion… à plus 🐱", P, .02)
-            con.print(f"  [#8a8cff]Rejoins le Discord : {DISCORD}[/]")
             break
         last = fn
-        if fn == "discord":
-            webbrowser.open(DISCORD)
-            continue
         con.clear()
         if not tuto_gate(fn, names[fn]):
             continue
@@ -9661,6 +9598,8 @@ def main():
         CFG.setdefault("uses", {})[fn] = CFG.get("uses", {}).get(fn, 0) + 1
         save_cfg()
         transition(re.sub(r"^\S+\s+", "", tr(names[fn])))
+        report_start = len(REPORT)
+        ai_calls_start = AI_CALLS
         try:
             globals()[fn]()
         except KeyboardInterrupt:
@@ -9669,6 +9608,9 @@ def main():
         except Exception as e:
             con.print(f"[{R_STYLE}]Erreur : {escape(str(e))}")
             pause()
+        else:
+            if AI_CALLS == ai_calls_start:
+                ai_deepen_new_results(fn, names.get(fn, fn), report_start)
 
 
 def lang_choose(first=False):
@@ -9706,24 +9648,31 @@ def theme_preview(it):
                  title=f"[{p}]aperçu", box=box.ROUNDED, style=f"on {bg}")
 
 
+def model_install_mark(model, installed):
+    if installed is None:
+        return "○ Ollama non détecté"
+    return "☑ installé" if ollama_has(installed, model) else "☐ non installé"
+
+
 def mod_settings():
     last = None
     while True:
         con.clear()
         con.rule(f"[{G}]🔧 RÉGLAGES")
+        installed = ollama_models()
         items = [{"label": f"🌍 Langue : {dict(LANGS).get(CFG.get('lang', 'fr'), 'Français')}", "value": "lang", "desc": "13 langues"},
                  {"label": f"🎨 Thème : {CFG.get('theme', DEFAULT_THEME)}", "value": "theme", "desc": f"{len(THEMES)} palettes de couleurs"},
                  {"label": f"🧾 Style : {'sobre (sans emojis)' if CFG.get('sobre', True) else 'avec emojis'}", "value": "sobre", "desc": "affichage du terminal"},
                  {"label": "📘 Réafficher les tutos", "value": "tuto", "desc": "à la prochaine ouverture de chaque module"},
-                 {"label": f"🤖 IA locale (texte) : {CFG.get('ollama_text', 'qwen2.5:3b')}", "value": "ai", "desc": "analyses, cours, rapports"},
-                 {"label": f"👀 Vision locale : {CFG.get('ollama_model', 'qwen2.5vl:7b')}", "value": "vis", "desc": "géoloc auto, logos"},
-                 {"label": f"🪶 IA légère : {CFG.get('ollama_light', 'qwen2.5:1.5b')}", "value": "light", "desc": "extraction rapide"},
-                 {"label": f"🔤 IA OCR : {CFG.get('ollama_ocr', 'qwen2.5vl:3b')}", "value": "ocr", "desc": "texte dans les images"},
-                 {"label": f"🛡️ IA cyber : {CFG.get('ollama_cyber', 'qwen2.5:7b')}", "value": "cyber", "desc": "logs et analyse défensive"},
-                 {"label": f"💻 IA code : {CFG.get('ollama_code', 'qwen2.5:7b')}", "value": "code", "desc": "Python, Bash, PowerShell, JS"},
+                 {"label": f"🤖 IA locale (texte) : {CFG.get('ollama_text', 'qwen2.5:3b')} · {model_install_mark(CFG.get('ollama_text', 'qwen2.5:3b'), installed)}", "value": "ai", "desc": "analyses, cours, rapports"},
+                 {"label": f"👀 Vision locale : {CFG.get('ollama_model', 'qwen2.5vl:7b')} · {model_install_mark(CFG.get('ollama_model', 'qwen2.5vl:7b'), installed)}", "value": "vis", "desc": "géoloc auto, logos"},
+                 {"label": f"🪶 IA légère : {CFG.get('ollama_light', 'qwen2.5:1.5b')} · {model_install_mark(CFG.get('ollama_light', 'qwen2.5:1.5b'), installed)}", "value": "light", "desc": "extraction rapide"},
+                 {"label": f"🔤 IA OCR : {CFG.get('ollama_ocr', 'qwen2.5vl:3b')} · {model_install_mark(CFG.get('ollama_ocr', 'qwen2.5vl:3b'), installed)}", "value": "ocr", "desc": "texte dans les images"},
+                 {"label": f"🛡️ IA cyber : {CFG.get('ollama_cyber', 'qwen2.5:7b')} · {model_install_mark(CFG.get('ollama_cyber', 'qwen2.5:7b'), installed)}", "value": "cyber", "desc": "logs et analyse défensive"},
+                 {"label": f"💻 IA code : {CFG.get('ollama_code', 'qwen2.5:7b')} · {model_install_mark(CFG.get('ollama_code', 'qwen2.5:7b'), installed)}", "value": "code", "desc": "Python, Bash, PowerShell, JS"},
                  {"label": f"✨ Animations : {'oui' if CFG['anim'] else 'non'}", "value": "anim", "desc": "démarrage, transitions"},
-                 {"label": f"🔑 Token Discord : {'enregistré' if secret_get('discord_token') else 'aucun'}", "value": "dc", "desc": "Prevname Discord (stockage séparé)"},
                  {"label": "📂 Ouvrir le dossier des résultats", "value": "out", "desc": str(OUT)},
+                 {"label": "🔄 Actualiser les modèles installés", "value": "models", "desc": "Vérifier l’inventaire Ollama sur cet ordinateur"},
                  {"label": "🧪 Tester l'IA", "value": "test", "desc": ""},
                  {"label": "← Retour au menu", "value": None}]
         c = select("Réglages", items, default=last, echo=False)
@@ -9734,10 +9683,9 @@ def mod_settings():
             lang_choose()
         elif c == "ai":
             con.print(f"[{M}]Toute l'IA tourne sur ton PC avec Ollama : gratuit, sans clé, rien ne part sur internet.")
-            v = select("Modèle de texte", [{"label": "qwen2.5:3b", "value": "qwen2.5:3b", "desc": "conseillé · ~2 Go · PC 8 Go de RAM"},
-                                           {"label": "qwen2.5:7b", "value": "qwen2.5:7b", "desc": "plus intelligent · ~4,7 Go · PC 16 Go"},
-                                           {"label": "llama3.2:3b", "value": "llama3.2:3b", "desc": "alternative · ~2 Go"},
-                                           {"label": "qwen2.5:1.5b", "value": "qwen2.5:1.5b", "desc": "très léger · vieux PC"}], default=CFG.get("ollama_text"))
+            choices = [("qwen2.5:3b", "conseillé · ~2 Go · PC 8 Go de RAM"), ("qwen2.5:7b", "plus intelligent · ~4,7 Go · PC 16 Go"),
+                       ("llama3.2:3b", "alternative · ~2 Go"), ("qwen2.5:1.5b", "très léger · vieux PC")]
+            v = select("Modèle de texte", [{"label": f"{model} · {model_install_mark(model, installed)}", "value": model, "desc": desc} for model, desc in choices], default=CFG.get("ollama_text"))
             if v:
                 CFG["ollama_text"] = v
                 ollama_setup(True, v)
@@ -9758,8 +9706,8 @@ def mod_settings():
             CFG["tutos_vus"] = []
             log("Les tutos s'afficheront de nouveau à l'ouverture de chaque module.", G)
         elif c == "vis":
-            v = select("Modèle de vision", [{"label": "qwen2.5vl:7b", "value": "qwen2.5vl:7b", "desc": "le plus précis · PC 16 Go de RAM"},
-                                            {"label": "qwen2.5vl:3b", "value": "qwen2.5vl:3b", "desc": "léger · PC 8 Go de RAM"}], default=CFG.get("ollama_model"))
+            choices = [("qwen2.5vl:7b", "le plus précis · PC 16 Go de RAM"), ("qwen2.5vl:3b", "léger · PC 8 Go de RAM")]
+            v = select("Modèle de vision", [{"label": f"{model} · {model_install_mark(model, installed)}", "value": model, "desc": desc} for model, desc in choices], default=CFG.get("ollama_model"))
             if v:
                 CFG["ollama_model"] = v
         elif c in ("light", "ocr", "cyber", "code"):
@@ -9772,19 +9720,21 @@ def mod_settings():
                 alternatives += ["qwen2.5vl:7b"]
             else:
                 alternatives += ["llama3.2:3b", "qwen2.5:3b"]
-            v = select(profile.label, [{"label": model, "value": model, "desc": "modèle local · téléchargement demandé seulement au premier usage"} for model in dict.fromkeys(alternatives)], default=current)
+            v = select(profile.label, [{"label": f"{model} · {model_install_mark(model, installed)}", "value": model, "desc": "modèle local · téléchargement demandé seulement au premier usage"} for model in dict.fromkeys(alternatives)], default=current)
             if v:
                 CFG[profile.config_key] = v
         elif c == "anim":
             CFG["anim"] = not CFG["anim"]
-        elif c == "dc":
-            k = Prompt.ask(f"[{G}]Token de bot Discord (Entrée = garder, « x » = effacer)", default="", show_default=False, password=True)
-            if k == "x":
-                SECRETS.delete("discord_token")
-            elif k.strip():
-                SECRETS.set("discord_token", k.strip())
         elif c == "out":
             open_file(OUT)
+        elif c == "models":
+            installed = ollama_models(refresh=True)
+            if installed is None:
+                log("Ollama n’est pas joignable sur cet ordinateur. Lance Ollama puis actualise à nouveau.", Y)
+            elif installed:
+                log("Modèles Ollama installés : " + ", ".join(installed), G)
+            else:
+                log("Ollama est actif, mais aucun modèle n’est installé.", Y)
         elif c == "test":
             ai_print('Réponds juste : "IA opérationnelle ✓" suivi du nom de ton modèle.', "Test")
             pause()

@@ -3,10 +3,10 @@ from catexe.modules.ui import UIContext, _plain
 
 
 def test_menu_registry_is_data_driven():
-    sections = build_sections(23, "https://discord.gg/test")
+    sections = build_sections(23)
     values = {value for _, items in sections for value, *_ in items}
     assert len(sections) == 8
-    assert len(values) == 62
+    assert len(values) == 60
     assert "mod_settings" in values
     assert "mod_diagnostics" in values
     assert KEYW["mod_social"]

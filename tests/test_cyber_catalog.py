@@ -20,6 +20,8 @@ def test_catalog_search_and_filters_are_deterministic():
     assert "ExifTool" in [x["name"] for x in search_tools(tools, query="métadonnées")]
     assert any(x["name"] == "Sherlock" for x in search_tools(tools, category="OSINT"))
     assert all(x["risk_level"] == "high" for x in search_tools(tools, risk="high"))
+    assert "Sherlock" in [x["name"] for x in search_tools(tools, query="sherlok", mode="approx")]
+    assert "Sherlock" not in [x["name"] for x in search_tools(tools, query="sherlok", mode="exact")]
     assert any(x["name"] == "Ollama" for x in search_tools(tools, platform="Windows"))
     assert "forensics" in categories(tools)
     assert "Linux" in platforms(tools)
