@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Build / packaging
+build/
+dist/
+*.spec
+!CatExe.spec
+CatExe-OSINT/
+*.egg-info/
+
+# Runtime data and local state
+resultats/*
+!resultats/.gitkeep
+cache/*
+!cache/.gitkeep
+config.json
+secrets.json
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+
+# Local AI / downloaded assets
+models/
+*.onnx
+*.pt
+*.pth
