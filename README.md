@@ -69,6 +69,7 @@ Les programmes Python compilés peuvent être signalés à tort par certains ant
 - audit de pseudos, e-mails, domaines et IP ;
 - analyse de métadonnées et GPS EXIF ;
 - hypothèses de géolocalisation avec limites explicites ;
+- visibilité avec profil de relief Copernicus GLO-90 après confirmation réseau et triangulation locale par relèvements ;
 - validation locale IBAN/VIN ;
 - rapports HTML/PDF et graphe d’enquête ;
 - profils IA locaux texte, légère, vision, OCR, cyber et code ;
@@ -81,7 +82,7 @@ Les outils de développement sont déclarés dans `requirements-dev.txt` :
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m py_compile main.py catexe/*.py catexe/modules/*.py tests/*.py
+python -m compileall -q main.py catexe tests
 pytest
 ruff check .
 ```
@@ -109,6 +110,7 @@ Voir également :
 - [`docs/local-ai.md`](docs/local-ai.md)
 - [`docs/cyber-catalog.md`](docs/cyber-catalog.md)
 - [`docs/pseudo-search.md`](docs/pseudo-search.md)
+- [`docs/geoint-relief-triangulation.md`](docs/geoint-relief-triangulation.md)
 - [`docs/troubleshooting.md`](docs/troubleshooting.md)
 - [`cookies/README.md`](cookies/README.md)
 

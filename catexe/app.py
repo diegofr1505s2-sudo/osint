@@ -31,6 +31,9 @@ from .modules.ai_router import AI_PROFILES, configured_model, profile_for
 from .modules.search import APPROX, EXACT
 from .modules.cyber_catalog import categories as cyber_categories, load_catalog, platforms as cyber_platforms, risk_label, search_tools
 from .modules.ip_attribution import summarize_ip_sources
+from .modules.geoint.elevation import MAX_POINTS_PER_REQUEST, fetch_open_meteo_elevations, great_circle_profile
+from .modules.geoint.line_of_sight import analyze_sightline
+from .modules.geoint.triangulation import BearingObservation, intersect_bearings
 from .modules.username_utils import normalize_username
 from .modules.menu_registry import KEYW, build_sections
 from .modules.metadata import cardinal, read_exif
@@ -4370,6 +4373,97 @@ def destination(lat, lon, brg, km):
     return math.degrees(b), (math.degrees(c) + 540) % 360 - 180
 
 
+def ask_geo_coordinates(label):
+    """Saisie de coordonnées littérales uniquement; ne géocode pas de nom de lieu."""
+    value = Prompt.ask(f"[{G}]{label} (latitude, longitude en degrés décimaux)").strip()
+    match = re.fullmatch(r"\s*(-?\d+(?:\.\d+)?)\s*[,; ]\s*(-?\d+(?:\.\d+)?)\s*", value)
+    if not match:
+        con.print(f"[{R_STYLE}]Entre des coordonnées comme 48.8584, 2.2945; aucun nom de lieu ne sera géocodé.")
+        return None
+    point = float(match.group(1)), float(match.group(2))
+    if not (-90 <= point[0] <= 90 and -180 <= point[1] <= 180):
+        con.print(f"[{R_STYLE}]Coordonnées hors limites.")
+        return None
+    LAST["pos"] = point
+    return point
+
+
+def mod_line_of_sight_relief():
+    con.rule(f"[{G}]LIGNE DE VUE · PROFIL DE RELIEF")
+    con.print(f"[{M}]Relief Copernicus GLO-90 (résolution nominale 90 m). Les bâtiments, arbres et obstacles plus petits ne sont pas représentés. Les coordonnées seront envoyées à Open-Meteo uniquement après confirmation.")
+    start = ask_geo_coordinates("Position de l'observateur")
+    end = ask_geo_coordinates("Position de la cible") if start else None
+    if not (start and end):
+        return
+    observer_h = ask_num(f"[{G}]Hauteur de l'observateur au-dessus du sol (m)", "1.7")
+    target_h = ask_num(f"[{G}]Hauteur de la cible au-dessus du sol (m)", "10")
+    try:
+        points = great_circle_profile(start, end)
+    except ValueError as exc:
+        con.print(f"[{R_STYLE}]{escape(str(exc))}")
+        return
+    calls = math.ceil(len(points) / MAX_POINTS_PER_REQUEST)
+    distance_m = haversine(*start, *end) * 1000
+    con.print(f"[{M}]Profil : {len(points)} points · pas moyen {distance_m / (len(points) - 1):.0f} m · {calls} requête(s) maximum.")
+    if not ask_yes("Envoyer ces coordonnées à Open-Meteo pour obtenir le profil d'altitude ?", default=False):
+        con.print(f"[{Y}]Recherche annulée; aucune requête d'altitude envoyée.")
+        return
+    try:
+        with con.status("Récupération des altitudes Copernicus…"):
+            elevations = fetch_open_meteo_elevations(points, get_json)
+        result = analyze_sightline(start, end, elevations, observer_h, target_h)
+    except Exception as exc:
+        con.print(Panel(f"Profil indisponible : {escape(str(exc))}", title="Ligne de vue", border_style=R_STYLE))
+        return
+    if result.visible is None:
+        verdict = f"[{Y}]Indéterminé : une ou plusieurs altitudes manquent."
+        clearance = "Dégagement non calculé."
+    else:
+        verdict = f"[{G}]Ligne de vue dégagée selon le modèle." if result.visible else f"[{R_STYLE}]Ligne de vue probablement masquée par le relief."
+        loc = f"à {result.obstruction_fraction * 100:.1f} % du trajet" if result.obstruction_fraction is not None else ""
+        clearance = f"Dégagement minimal : {result.minimum_clearance_m:.1f} m {loc}."
+    body = (f"{verdict}\n{clearance}\nDistance : {result.distance_m / 1000:.2f} km · échantillons : {result.sample_count} · pas moyen : {result.sample_spacing_m:.0f} m\n"
+            "Source : Copernicus GLO-90 via Open-Meteo · réfraction standard estimée.\n"
+            "Limite : végétation, bâtiments et erreurs du modèle numérique peuvent changer le résultat.")
+    con.print(Panel(body, title="Visibilité avec relief", border_style="#00e5ff"))
+    add_report("Ligne de vue", f"{start} → {end}", f"{verdict}\n{clearance}\n{result.distance_m / 1000:.2f} km · {result.sample_count} points · Copernicus GLO-90 via Open-Meteo; obstacles bâtis/végétation non modélisés.")
+
+
+def mod_bearing_triangulation():
+    con.rule(f"[{G}]TRIANGULATION PAR RELÈVEMENTS")
+    con.print(f"[{M}]Saisis au moins deux positions connues et l'azimut mesuré vers la cible, en degrés depuis le nord vrai, dans le sens horaire. Calcul hors ligne, pour une zone locale (max. 200 km); entre uniquement des lieux que tu es autorisé à analyser.")
+    count = ask_num(f"[{G}]Nombre de relèvements (2 à 8)", "2")
+    if not count.is_integer() or not 2 <= count <= 8:
+        con.print(f"[{R_STYLE}]Choisis un nombre entier de 2 à 8.")
+        return
+    observations = []
+    for index in range(int(count)):
+        point = ask_geo_coordinates(f"Position connue {index + 1}")
+        if not point:
+            return
+        azimuth = ask_num(f"[{G}]Azimut vers la cible depuis le nord vrai (degrés)", "0")
+        if not 0 <= azimuth <= 360:
+            con.print(f"[{R_STYLE}]L'azimut doit être entre 0 et 360 degrés.")
+            return
+        observations.append(BearingObservation(point[0], point[1], azimuth))
+    uncertainty = ask_num(f"[{G}]Erreur angulaire estimée de chaque mesure (degrés)", "1")
+    try:
+        result = intersect_bearings(observations, uncertainty)
+    except ValueError as exc:
+        con.print(Panel(escape(str(exc)), title="Triangulation impossible", border_style=R_STYLE))
+        return
+    body = (f"Position estimée : {result.latitude:.6f}, {result.longitude:.6f}\n"
+            f"Incertitude indicative : ± {result.uncertainty_radius_m:.0f} m (erreur angulaire saisie : {uncertainty:g}°)\n"
+            f"Écart moyen aux relèvements : {result.residual_rms_m:.1f} m · angle de croisement minimal : {result.minimum_crossing_angle_deg:.1f}°")
+    if not result.all_rays_forward:
+        body += f"\n[{Y}]Attention : au moins un relèvement pointe à l'opposé de la position calculée; vérifie les mesures."
+    if result.residual_rms_m > 500:
+        body += f"\n[{Y}]Les lignes ne convergent pas bien; le résultat est peu cohérent."
+    body += "\nEstimation plane locale, pas une position vérifiée. L'azimut magnétique doit être corrigé de la déclinaison avant saisie."
+    con.print(Panel(body, title="Triangulation · estimation", border_style="#00e5ff"))
+    add_report("Triangulation", f"{len(observations)} relèvements", f"{result.latitude:.6f}, {result.longitude:.6f} · incertitude indicative ±{result.uncertainty_radius_m:.0f} m · résidu RMS {result.residual_rms_m:.1f} m · angle minimal {result.minimum_crossing_angle_deg:.1f}° · azimuts vrais, non corrigés automatiquement.")
+
+
 def mod_bearing():
     con.rule(f"[{G}]📏 DISTANCE · AZIMUT · HORIZON")
     while True:
@@ -4377,6 +4471,8 @@ def mod_bearing():
                                  {"label": "🧭 Point à X km dans une direction", "value": "dest"},
                                  {"label": "🌅 Horizon : jusqu'où voit-on ?", "value": "hor"},
                                  {"label": "🗻 Un sommet / une tour est-il visible d'ici ?", "value": "vis"},
+                                 {"label": "🗻 Visibilité avec profil de relief (Open-Meteo)", "value": "terrain"},
+                                 {"label": "📐 Trianguler une cible par relèvements", "value": "triangulation"},
                                  {"label": "← Retour", "value": None}])
         if c is None:
             return
@@ -4416,6 +4512,10 @@ def mod_bearing():
             vis = H - hidden
             con.print(Panel((f"[{G}]Visible[/] : {vis:.0f} m dépassent de l'horizon (sur {H:.0f} m)" if vis > 0 else f"[{R}]Invisible[/] : caché par la courbure de la Terre")
                             + f"\n[{M}]Partie cachée par la courbure : {hidden:.0f} m · ne tient pas compte du relief (collines, bâtiments).", border_style="#00e5ff"))
+        elif c == "terrain":
+            mod_line_of_sight_relief()
+        elif c == "triangulation":
+            mod_bearing_triangulation()
 
 
 # ------------------------------------------------------------ 📡 IMAGES SATELLITE D'AVANT (Esri Wayback)

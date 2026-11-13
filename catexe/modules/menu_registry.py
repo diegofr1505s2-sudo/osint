@@ -38,7 +38,7 @@ def build_sections(learn_count: int = 23):
         ("mod_webcams", "📹 Webcams d'un lieu", "Windy · vérif météo", "Webcams publiques officielles autour d'un lieu (météo, tourisme, stations, ports) avec carte, aperçus et time-lapse de la journée, pour vérifier un lieu ou la météo d'une photo."),
         ("mod_place", "🌍 Infos d'un lieu", "adresse · UTM · 12 cartes", "Toutes les infos d'un point : adresse, coordonnées dans tous les formats, altitude, et 12 cartes (Street View, Earth 3D, Mapillary, satellite…)."),
         ("mod_satellite", "📡 Satellite d'avant", "historique depuis 2014", "Compare les images satellite d'un lieu sur ~200 dates depuis 2014 : constructions, démolitions, travaux, véhicules garés…"),
-        ("mod_bearing", "📏 Distance · horizon", "azimut · visibilité", "Distance et direction entre 2 points, point à X km dans une direction, distance de l'horizon, et si un sommet ou une tour est visible malgré la courbure de la Terre."),
+        ("mod_bearing", "📏 Distance · horizon", "azimut · relief · triangulation", "Distance, azimut et horizon; visibilité avec profil de relief Copernicus GLO-90 après confirmation réseau; triangulation hors ligne à partir de relèvements."),
         ("mod_clues", "🧩 Recherche par indices", "trouver le lieu sur la carte", "Combine des indices vus sur une photo (église + pharmacie + arrêt de bus…) pour trouver tous les endroits d'une zone où ils sont proches."),
         ("mod_planes", "🛫 Avions", "ADS-B en direct", "Avions en vol autour d'un point, en direct (dont les vols militaires visibles), avec carte."),
     ]),
