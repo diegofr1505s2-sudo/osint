@@ -1,13 +1,30 @@
 from unittest.mock import patch
 
 import catexe.app as app
-from catexe.modules.username_utils import normalize_username
+from catexe.modules.username_utils import normalize_username, username_search_variants
 
 
 def test_normalize_styled_latin_username():
     assert normalize_username("𝘊𝘢𝘵.𝘦𝘹𝘦") == "Cat.exe"
     assert normalize_username(" @Cat.exe ") == "Cat.exe"
     assert normalize_username("cat\u200b.exe") == "cat.exe"
+
+
+def test_username_search_variants_cover_case_accents_italic_and_punctuation():
+    variants = username_search_variants("𝘛ést.User")
+    assert variants[0] == "Tést.User"
+    assert "Test.User" in variants
+    assert "tést.user" in variants
+    assert "test.user" in variants
+    assert "test_user" in variants
+    assert "test-user" in variants
+    assert "testuser" in variants
+    assert len(variants) <= 8
+
+
+def test_username_search_variants_are_bounded_and_stable():
+    assert username_search_variants("FOO") == ["FOO", "foo"]
+    assert username_search_variants("a.b", max_variants=3) == ["a.b", "ab", "a_b"]
 
 
 def test_wmn_check_queries_normalized_username_and_preserves_pretty_url():

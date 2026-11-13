@@ -34,7 +34,7 @@ from .modules.ip_attribution import summarize_ip_sources
 from .modules.geoint.elevation import MAX_POINTS_PER_REQUEST, fetch_open_meteo_elevations, great_circle_profile
 from .modules.geoint.line_of_sight import analyze_sightline
 from .modules.geoint.triangulation import BearingObservation, intersect_bearings
-from .modules.username_utils import normalize_username
+from .modules.username_utils import normalize_username, username_search_variants
 from .modules.menu_registry import KEYW, build_sections
 from .modules.metadata import cardinal, read_exif
 from .modules.secure_store import SecretStore
@@ -945,10 +945,11 @@ def mod_user():
     u = normalize_username(raw_u)
     if u != raw_u.strip().lstrip("@"):
         con.print(f"[{M}]Pseudo Unicode normalisé :[/] {escape(u)}")
-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,40}", u):
+    if not re.fullmatch(r"[\w.-]{1,40}", u, flags=re.UNICODE):
         con.print(f"[{R}]Pseudo invalide.")
         return pause()
-    names = variants(u) if ask_yes("Tester aussi les variantes (_ . -) ?") else [u]
+    names = username_search_variants(u)
+    con.print(f"[{M}]Variantes normalisées recherchées automatiquement ({len(names)} maximum) : casse, accents, Unicode stylisé et ponctuation.")
     jobs = [(s, n) for n in names for s in SITES]
     res = []
     with Progress(TextColumn(f"[{G}]Scan"), BarColumn(complete_style="#00e5ff"), TaskProgressColumn(), TextColumn("{task.description}"), console=con) as pr:
@@ -9113,7 +9114,7 @@ Pour toi-même, un contact pro ou une vérification. Jamais pour harceler quelqu
 
 
 "mod_user": """### 🎯 À quoi ça sert
-Chercher un pseudo sur **95 sites** avec ses variantes (`_` `.` `-`) et donner un niveau d'exposition.
+Chercher automatiquement un pseudo et ses variantes de casse, d'accents, d'Unicode stylisé et de ponctuation sur **95 sites**, puis donner un niveau d'exposition.
 ### 🧰 Ce qu'il te faut
 Un pseudo (voir le tuto *Lookup réseaux sociaux* pour le trouver).
 ### 💡 Astuces
