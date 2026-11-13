@@ -28,6 +28,7 @@ from .http_client import create_session
 from .modules.geolocation import GeoHypothesis, confidence_text, limitation_text, rank_hypotheses
 from .modules.financial_identifiers import decode_vin, validate_iban
 from .modules.ai_router import AI_PROFILES, configured_model, profile_for
+from .modules.ai_catalog import AI_CATALOG, CATEGORY_INFO, catalog_model_sizes, models_for_profile
 from .modules.search import APPROX, EXACT
 from .modules.cyber_catalog import categories as cyber_categories, load_catalog, platforms as cyber_platforms, risk_label, search_tools
 from .modules.ip_attribution import summarize_ip_sources
@@ -473,7 +474,7 @@ def ask_ai(prompt, img_b64=None, on_token=None, task="text"):
         _AI_ASKED[want] = True
         m = ollama_setup(interactive=True, m=want)
     if not m:
-        raise RuntimeError(f"IA locale indisponible : installe Ollama et le profil {profile.label} ({want}) via le menu Réglages → IA locale")
+        raise RuntimeError(f"IA locale indisponible : installe Ollama et le profil {profile.label} ({want}) via Réglages → Profils IA à configurer")
     msg = {"role": "user", "content": prompt}
     if img_b64:
         msg["images"] = [img_b64]
@@ -509,7 +510,7 @@ def ai_print(prompt, title="Analyse IA", img=None, task="text"):
             t = ask_ai(prompt, img, on_token=lambda x: live.update(box_(x[-6000:])), task=task)
     except Exception as e:
         if "IA locale indisponible" in str(e) or isinstance(e, requests.ConnectionError):
-            con.print(Panel(tr("L'IA locale n'est pas encore installée : le reste du module marche sans elle.\nPour l'activer : menu Réglages → IA locale (gratuit, tourne sur ton PC)."),
+            con.print(Panel(tr("L'IA locale n'est pas encore installée : le reste du module marche sans elle.\nPour l'activer : Réglages → Profils IA à configurer (l'inférence tourne sur ton PC)."),
                             title="🤖 IA locale", border_style=Y))
         else:
             con.print(Panel(escape(str(e)), title="Erreur IA", border_style=R))
@@ -3219,7 +3220,7 @@ def ollama_setup(interactive=True, m=None):
     return m
 
 
-MODEL_SIZE = {"qwen2.5vl:7b": "~6 Go", "qwen2.5vl:3b": "~3 Go", "qwen2.5:3b": "~2 Go", "qwen2.5:7b": "~4,7 Go", "llama3.2:3b": "~2 Go", "qwen2.5:1.5b": "~1 Go"}
+MODEL_SIZE = {"qwen2.5vl:7b": "~6 Go", "qwen2.5vl:3b": "~3 Go", "qwen2.5:3b": "~2 Go", "qwen2.5:7b": "~4,7 Go", "llama3.2:3b": "~2 Go", "qwen2.5:1.5b": "~1 Go", **catalog_model_sizes()}
 
 
 def vision_engine():
@@ -4802,7 +4803,7 @@ def html_text(h):
 def mod_extract():
     con.rule(f"[{G}]🧲 EXTRACTEUR D'INDICES")
     con.print(f"[{M}]Sort automatiquement d'une page web, d'un fichier ou d'un texte : emails, téléphones, liens, réseaux sociaux, IP, cryptos, IBAN,\nidentifiants Google Analytics (pour relier des sites au même propriétaire), clés exposées, coordonnées GPS…\n")
-    src = select("Source", [{"label": "🌐 Page web (URL)", "value": "u"}, {"label": "📂 Fichier (txt, html, pdf, docx, json, csv…)", "value": "f"},
+    src = select("Source", [{"label": "🌐 Page web (URL)", "value": "u"}, {"label": "📂 Fichier (txt, html, pdf, docx, image…)", "value": "f"},
                             {"label": "📋 Coller du texte", "value": "p"}, {"label": "← Retour", "value": None}])
     if not src:
         return
@@ -4838,7 +4839,27 @@ def mod_extract():
             con.print(f"[{R}]Fichier introuvable.")
             return pause()
         label = p.name
-        if p.suffix.lower() == ".pdf":
+        if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif"):
+            if not ask_yes("Lire le texte de cette image avec le profil OCR local Ollama ?"):
+                return pause()
+            try:
+                if Image is None:
+                    raise RuntimeError("Pillow n'est pas installé; installe la dépendance Pillow pour lire les images.")
+                with Image.open(p) as image:
+                    ocr_text = ask_ai(
+                        "Lis uniquement le texte réellement visible dans cette image. Recopie-le fidèlement, "
+                        "garde les lignes et chiffres, n'invente pas les parties illisibles. Réponds uniquement "
+                        "avec le texte reconnu.",
+                        img_b64(image),
+                        task="ocr",
+                    )
+                text = ocr_text.strip()
+                if text:
+                    extra["Texte OCR"] = [text[:4000]]
+            except Exception as e:
+                con.print(f"[{R}]OCR local impossible : {escape(str(e))}")
+                return pause()
+        elif p.suffix.lower() == ".pdf":
             try:
                 from pypdf import PdfReader
                 text = "\n".join(pg.extract_text() or "" for pg in PdfReader(str(p)).pages)
@@ -4977,18 +4998,33 @@ def b58dec(s):
 
 
 def decoders(s):
-    import binascii, urllib.parse, html as _h, zlib, gzip, codecs
+    import binascii, urllib.parse, html as _h, zlib, bz2, lzma, codecs
     t = s.strip()
     out = []
+    max_decompressed = 1_000_000
+
+    def bounded_decompress(data, kind):
+        if kind in ("gzip", "zlib"):
+            window = 16 + zlib.MAX_WBITS if kind == "gzip" else zlib.MAX_WBITS
+            decoder = zlib.decompressobj(window)
+            value = decoder.decompress(data, max_decompressed + 1)
+            if len(value) > max_decompressed or decoder.unconsumed_tail or not decoder.eof:
+                raise ValueError("Flux incomplet ou supérieur à la limite de décompression.")
+            return value
+        decoder = bz2.BZ2Decompressor() if kind == "bz2" else lzma.LZMADecompressor(memlimit=64 * 1024 * 1024)
+        value = decoder.decompress(data, max_length=max_decompressed + 1)
+        if len(value) > max_decompressed or not decoder.eof:
+            raise ValueError("Flux incomplet ou supérieur à la limite de décompression.")
+        return value
 
     def add(name, fn):
         try:
             v = fn()
             if isinstance(v, bytes):
-                for z in (lambda b: gzip.decompress(b), lambda b: zlib.decompress(b)):
+                for label in ("gzip", "zlib", "bz2", "xz"):
                     try:
-                        v = z(v)
-                        name += " + décompression"
+                        v = bounded_decompress(v, label)
+                        name += f" + décompression {label}"
                         break
                     except Exception:
                         pass
@@ -5000,6 +5036,11 @@ def decoders(s):
     c = re.sub(r"\s", "", t)
     if re.fullmatch(r"[A-Za-z0-9+/=_-]{4,}", c):
         add("Base64", lambda: base64.b64decode(c + "=" * (-len(c) % 4), altchars=b"-_" if re.search(r"[-_]", c) else None, validate=False))
+    if t.startswith("<~") and t.endswith("~>"):
+        add("ASCII85", lambda: base64.a85decode(t.encode(), adobe=True))
+    elif len(c) >= 5 and re.fullmatch(r"[!-~]+", c):
+        add("ASCII85", lambda: base64.a85decode(c.encode()))
+        add("Base85", lambda: base64.b85decode(c.encode()))
     if re.fullmatch(r"[A-Z2-7=]{8,}", c.upper()) and len(c) >= 8:
         add("Base32", lambda: base64.b32decode(c.upper() + "=" * (-len(c) % 8)))
     if re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{6,}", c):
@@ -5032,7 +5073,23 @@ def decoders(s):
         for sc, k in rots[:2]:
             v = "".join(chr((ord(ch) - (65 if ch.isupper() else 97) + k) % 26 + (65 if ch.isupper() else 97)) if ch.isascii() and ch.isalpha() else ch for ch in t)
             out.append((f"César / ROT{k}" + (" (ROT13)" if k == 13 else ""), v))
+        rot13 = "".join(chr((ord(ch) - (65 if ch.isupper() else 97) + 13) % 26 + (65 if ch.isupper() else 97)) if ch.isascii() and ch.isalpha() else ch for ch in t)
+        if not any(value == rot13 for _, value in out):
+            out.append(("ROT13", rot13))
         out.append(("Atbash", "".join(chr(155 - ord(ch)) if "A" <= ch <= "Z" else chr(219 - ord(ch)) if "a" <= ch <= "z" else ch for ch in t)))
+    if re.search(r"[!-~]", t):
+        out.append(("ROT47", "".join(chr((ord(ch) - 33 + 47) % 94 + 33) if 33 <= ord(ch) <= 126 else ch for ch in t)))
+    if re.search(r"(?:^|\.)xn--", t, re.I):
+        def decode_idna():
+            return ".".join(label.encode("ascii").decode("idna") if label.lower().startswith("xn--") else label for label in t.split("."))
+        add("IDNA / Punycode", decode_idna)
+    if re.fullmatch(r"(?:U\+[0-9A-Fa-f]{1,6}[\s,;]*)+", t, re.I):
+        def decode_codepoints():
+            points = [int(value, 16) for value in re.findall(r"U\+([0-9A-Fa-f]{2,6})", t, re.I)]
+            if any(point > 0x10FFFF or 0xD800 <= point <= 0xDFFF for point in points):
+                raise ValueError("Codepoint Unicode invalide")
+            return "".join(chr(point) for point in points)
+        add("Codepoints Unicode U+", decode_codepoints)
     out.append(("À l'envers", t[::-1]))
     return out
 
@@ -5057,7 +5114,7 @@ def magic_decode(s, depth=3):
 
 def mod_decode():
     con.rule(f"[{G}]🔐 DÉCODEUR MULTI-FORMAT (mode « magique »)")
-    con.print(f"[{M}]Base64, Base32, Base58, hexa, binaire, ASCII, octal, URL, HTML, \\u, Morse, JWT, quoted-printable, César/ROT13, Atbash, à l'envers…\n"
+    con.print(f"[{M}]Base64, Base32, Base58, Base85/ASCII85, hexa, binaire, ASCII, octal, URL, HTML, \\u, IDNA/Punycode, Morse, JWT, quoted-printable, ROT47, César/ROT13, Atbash, à l'envers…\n"
               "Le mode magique essaie tout, même les encodages empilés (base64 dans de l'hexa…), et classe les résultats lisibles en premier.\n")
     while True:
         c = select("Décodeur", [{"label": "🪄 Décoder automatiquement", "value": "d"}, {"label": "🔒 Encoder un texte", "value": "e"}, {"label": "← Retour", "value": None}])
@@ -5068,9 +5125,11 @@ def mod_decode():
             continue
         if c == "e":
             import urllib.parse
-            enc = [("Base64", base64.b64encode(s.encode()).decode()), ("Base32", base64.b32encode(s.encode()).decode()), ("Hexadécimal", s.encode().hex()),
+            enc = [("Base64", base64.b64encode(s.encode()).decode()), ("Base32", base64.b32encode(s.encode()).decode()),
+                   ("Base85", base64.b85encode(s.encode()).decode()), ("ASCII85", base64.a85encode(s.encode(), adobe=True).decode()), ("Hexadécimal", s.encode().hex()),
                    ("Binaire", " ".join(f"{b:08b}" for b in s.encode())), ("URL", urllib.parse.quote(s)), ("ROT13", s.translate(str.maketrans(
                        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", "NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm"))),
+                   ("ROT47", "".join(chr((ord(ch) - 33 + 47) % 94 + 33) if 33 <= ord(ch) <= 126 else ch for ch in s)),
                    ("Morse", " / ".join(" ".join({v: k for k, v in MORSE.items()}.get(ch, "?") for ch in w) for w in s.upper().split())), ("À l'envers", s[::-1])]
             t = Table(box=box.ROUNDED, border_style="#2b3158")
             t.add_column("Format")
@@ -9354,7 +9413,7 @@ Générer des **recherches Google avancées** (dorks) : fichiers PDF d'un site, 
 Ne télécharge et n'utilise pas des documents qui ne te sont pas destinés.""",
 
 "mod_decode": """### 🎯 À quoi ça sert
-Décoder automatiquement un texte bizarre : **Base64, hexa, binaire, Morse, ROT13, César, URL, JWT…** même empilés.
+Décoder automatiquement un texte bizarre : **Base64/32/58/85, ASCII85, hexa, binaire, Morse, ROT13/47, César, URL, IDNA/Punycode, JWT…** et plusieurs compressions, même empilés.
 ### 🧰 Ce qu'il te faut
 Le texte codé (copie-le tel quel).
 ### 💡 Reconnaître un codage
@@ -9755,6 +9814,86 @@ def model_install_mark(model, installed):
     return "☑ installé" if ollama_has(installed, model) else "☐ non installé"
 
 
+def ai_catalog_menu(installed):
+    categories = list(AI_CATALOG)
+    items = [{"label": f"{category} · {len(AI_CATALOG[category])} modèles", "value": category,
+              "desc": CATEGORY_INFO[category]} for category in categories]
+    while True:
+        category = select("Catalogue IA · choisir une catégorie", items)
+        if category is None:
+            return
+        con.print(Panel(CATEGORY_INFO[category], title=f"IA · {category}", border_style="#00e5ff"))
+        table = Table(box=box.ROUNDED, border_style="#2b3158", header_style="bold #00e5ff", expand=True)
+        table.add_column("Modèle")
+        table.add_column("Paramètres")
+        table.add_column("Disponibilité")
+        table.add_column("Rôle / note", overflow="fold")
+        for model in AI_CATALOG[category]:
+            if model.ollama_tag:
+                availability = f"{model_install_mark(model.ollama_tag, installed)} · Ollama"
+                note = f"{model.purpose} Tag : {model.ollama_tag}. Taille disque estimée : {model.download_size}."
+            else:
+                availability = "Moteur séparé requis"
+                note = model.purpose + (f" {model.note}" if model.note else "")
+            table.add_row(model.name, model.parameters, availability, note)
+        con.print(table)
+        if category in ("Extraction", "Audio"):
+            con.print(f"[{Y}]Catalogue informatif : cette famille n'est pas encore reliée à un moteur d'exécution dans CAT.EXE.")
+        pause()
+
+
+def ai_model_choices(profile, installed):
+    models = list(models_for_profile(profile))
+    if profile in ("vision", "ocr"):
+        legacy = [("qwen2.5vl:7b", "Modèle existant · vision", "~6 Go"),
+                  ("qwen2.5vl:3b", "Modèle existant · vision légère", "~3 Go")]
+    elif profile == "light":
+        legacy = [("qwen2.5:1.5b", "Modèle existant · léger", "~1 Go")]
+    else:
+        legacy = [("qwen2.5:3b", "Modèle existant · texte général", "~2 Go"),
+                  ("qwen2.5:7b", "Modèle existant · analyse plus capable", "~4,7 Go")]
+    choices = [{
+        "label": f"{model.name} · {model.parameters} · {model.download_size} · {model_install_mark(model.ollama_tag, installed)}",
+        "value": model.ollama_tag,
+        "desc": f"{model.purpose} · {model.download_size} · téléchargement Ollama demandé seulement si nécessaire.",
+    } for model in models]
+    known = {choice["value"] for choice in choices}
+    for tag, description, size in legacy:
+        if tag not in known:
+            choices.append({"label": f"{tag} · {model_install_mark(tag, installed)}", "value": tag,
+                            "desc": f"{description} · {size} · modèle historique CAT.EXE."})
+    return choices
+
+
+def ai_profiles_menu(installed):
+    profiles = [
+        ("text", "Texte", "résumés, explications, analyses et rapports"),
+        ("vision", "Vision", "photos, images et GEOINT visuel"),
+        ("light", "Légère", "extractions courtes et réponses rapides"),
+        ("ocr", "OCR", "lecture du texte dans les images"),
+        ("cyber", "Cyber", "journaux, configuration et analyse défensive"),
+        ("code", "Code", "explication et aide sur du code"),
+    ]
+    items = []
+    for key, label, purpose in profiles:
+        profile = AI_PROFILES[key]
+        selected = CFG.get(profile.config_key, profile.default_model)
+        items.append({"label": f"{label} · {selected} · {model_install_mark(selected, installed)}",
+                      "value": key, "desc": purpose})
+    key = select("Profils IA · choisir le rôle à configurer", items)
+    if key is None:
+        return
+    profile = AI_PROFILES[key]
+    current = CFG.get(profile.config_key, profile.default_model)
+    choices = ai_model_choices(key, installed)
+    value = select(f"Modèle IA · {profile.label}", choices, default=current)
+    if not value:
+        return
+    CFG[profile.config_key] = value
+    if key in ("text", "vision"):
+        ollama_setup(True, value)
+
+
 def mod_settings():
     last = None
     while True:
@@ -9765,12 +9904,8 @@ def mod_settings():
                  {"label": f"🎨 Thème : {CFG.get('theme', DEFAULT_THEME)}", "value": "theme", "desc": f"{len(THEMES)} palettes de couleurs"},
                  {"label": f"🧾 Style : {'sobre (sans emojis)' if CFG.get('sobre', True) else 'avec emojis'}", "value": "sobre", "desc": "affichage du terminal"},
                  {"label": "📘 Réafficher les tutos", "value": "tuto", "desc": "à la prochaine ouverture de chaque module"},
-                 {"label": f"🤖 IA locale (texte) : {CFG.get('ollama_text', 'qwen2.5:3b')} · {model_install_mark(CFG.get('ollama_text', 'qwen2.5:3b'), installed)}", "value": "ai", "desc": "analyses, cours, rapports"},
-                 {"label": f"👀 Vision locale : {CFG.get('ollama_model', 'qwen2.5vl:7b')} · {model_install_mark(CFG.get('ollama_model', 'qwen2.5vl:7b'), installed)}", "value": "vis", "desc": "géoloc auto, logos"},
-                 {"label": f"🪶 IA légère : {CFG.get('ollama_light', 'qwen2.5:1.5b')} · {model_install_mark(CFG.get('ollama_light', 'qwen2.5:1.5b'), installed)}", "value": "light", "desc": "extraction rapide"},
-                 {"label": f"🔤 IA OCR : {CFG.get('ollama_ocr', 'qwen2.5vl:3b')} · {model_install_mark(CFG.get('ollama_ocr', 'qwen2.5vl:3b'), installed)}", "value": "ocr", "desc": "texte dans les images"},
-                 {"label": f"🛡️ IA cyber : {CFG.get('ollama_cyber', 'qwen2.5:7b')} · {model_install_mark(CFG.get('ollama_cyber', 'qwen2.5:7b'), installed)}", "value": "cyber", "desc": "logs et analyse défensive"},
-                 {"label": f"💻 IA code : {CFG.get('ollama_code', 'qwen2.5:7b')} · {model_install_mark(CFG.get('ollama_code', 'qwen2.5:7b'), installed)}", "value": "code", "desc": "Python, Bash, PowerShell, JS"},
+                 {"label": "🧠 Catalogue IA par catégorie", "value": "ai_catalog", "desc": "Texte · Vision · Extraction · Audio · état d'installation"},
+                 {"label": "⚙️ Profils IA à configurer", "value": "ai_profiles", "desc": "Texte · Vision · Légère · OCR · Cyber · Code"},
                  {"label": f"✨ Animations : {'oui' if CFG['anim'] else 'non'}", "value": "anim", "desc": "démarrage, transitions"},
                  {"label": "📂 Ouvrir le dossier des résultats", "value": "out", "desc": str(OUT)},
                  {"label": "🔄 Actualiser les modèles installés", "value": "models", "desc": "Vérifier l’inventaire Ollama sur cet ordinateur"},
@@ -9782,14 +9917,10 @@ def mod_settings():
         last = c
         if c == "lang":
             lang_choose()
-        elif c == "ai":
-            con.print(f"[{M}]Toute l'IA tourne sur ton PC avec Ollama : gratuit, sans clé, rien ne part sur internet.")
-            choices = [("qwen2.5:3b", "conseillé · ~2 Go · PC 8 Go de RAM"), ("qwen2.5:7b", "plus intelligent · ~4,7 Go · PC 16 Go"),
-                       ("llama3.2:3b", "alternative · ~2 Go"), ("qwen2.5:1.5b", "très léger · vieux PC")]
-            v = select("Modèle de texte", [{"label": f"{model} · {model_install_mark(model, installed)}", "value": model, "desc": desc} for model, desc in choices], default=CFG.get("ollama_text"))
-            if v:
-                CFG["ollama_text"] = v
-                ollama_setup(True, v)
+        elif c == "ai_catalog":
+            ai_catalog_menu(installed)
+        elif c == "ai_profiles":
+            ai_profiles_menu(installed)
         elif c == "sobre":
             CFG["sobre"] = not CFG.get("sobre", True)
             save_cfg()
@@ -9806,24 +9937,6 @@ def mod_settings():
         elif c == "tuto":
             CFG["tutos_vus"] = []
             log("Les tutos s'afficheront de nouveau à l'ouverture de chaque module.", G)
-        elif c == "vis":
-            choices = [("qwen2.5vl:7b", "le plus précis · PC 16 Go de RAM"), ("qwen2.5vl:3b", "léger · PC 8 Go de RAM")]
-            v = select("Modèle de vision", [{"label": f"{model} · {model_install_mark(model, installed)}", "value": model, "desc": desc} for model, desc in choices], default=CFG.get("ollama_model"))
-            if v:
-                CFG["ollama_model"] = v
-        elif c in ("light", "ocr", "cyber", "code"):
-            profile = AI_PROFILES[c]
-            current = CFG.get(profile.config_key, profile.default_model)
-            alternatives = [profile.default_model]
-            if c in ("cyber", "code"):
-                alternatives += ["qwen2.5:3b", "llama3.2:3b"]
-            elif c == "ocr":
-                alternatives += ["qwen2.5vl:7b"]
-            else:
-                alternatives += ["llama3.2:3b", "qwen2.5:3b"]
-            v = select(profile.label, [{"label": f"{model} · {model_install_mark(model, installed)}", "value": model, "desc": "modèle local · téléchargement demandé seulement au premier usage"} for model in dict.fromkeys(alternatives)], default=current)
-            if v:
-                CFG[profile.config_key] = v
         elif c == "anim":
             CFG["anim"] = not CFG["anim"]
         elif c == "out":

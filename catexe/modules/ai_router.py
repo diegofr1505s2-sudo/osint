@@ -35,9 +35,10 @@ AI_TASKS = {
 
 
 def profile_for(task: str, image: bool = False) -> AIProfile:
-    if image:
+    task_profile = AI_TASKS.get(task, task if task in AI_PROFILES else "text")
+    if image and task_profile != "ocr":
         return AI_PROFILES["vision"]
-    return AI_PROFILES[AI_TASKS.get(task, task if task in AI_PROFILES else "text")]
+    return AI_PROFILES[task_profile]
 
 
 def configured_model(task: str, config: dict, image: bool = False) -> str:

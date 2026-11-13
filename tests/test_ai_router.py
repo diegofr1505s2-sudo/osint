@@ -13,11 +13,13 @@ def test_task_routing_is_specialized():
 
 def test_image_overrides_text_task():
     assert profile_for("summary", image=True).key == "vision"
+    assert profile_for("ocr", image=True).key == "ocr"
 
 
 def test_configured_models_are_used_without_network_calls():
     config = {"ollama_cyber": "local-cyber:latest"}
     assert configured_model("cyber", config) == "local-cyber:latest"
+    assert configured_model("ocr", {"ollama_ocr": "local-ocr:latest"}, image=True) == "local-ocr:latest"
     assert configured_model("summary", {}) == AI_PROFILES["text"].default_model
     assert set(("summary", "vision", "ocr", "cyber", "code")) <= set(AI_TASKS)
 

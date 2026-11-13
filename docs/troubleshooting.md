@@ -21,8 +21,9 @@ de données.
 ## Ollama indisponible
 
 L’application reste utilisable sans IA locale. Installez Ollama séparément,
-lancez-le, puis choisissez les modèles dans `Réglages → IA locale`. Aucun
-modèle lourd n’est téléchargé sans confirmation.
+lancez-le, puis consultez `Réglages → Catalogue IA par catégorie` et choisissez
+un modèle dans `Réglages → Profils IA à configurer`. Aucun modèle lourd n’est
+téléchargé sans confirmation.
 
 ## Build EXE
 
